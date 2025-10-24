@@ -15,9 +15,7 @@ const breadcrumbs: BreadcrumbItem[] = [
     <Head title="Departments" />
 
     <AppLayout :breadcrumbs="breadcrumbs">
-        <div
-            class="p-4"
-        >
+        <div class="border rounded-b-sm h-full m-1">
             Test
             <!-- Write Code Here -->
         </div>
