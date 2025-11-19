@@ -2,9 +2,10 @@
 
 namespace App\Models;
 
-use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
+use Illuminate\Database\Eloquent\SoftDeletes;
 
 class Tag extends Model
 {
@@ -12,10 +13,8 @@ class Tag extends Model
 
     protected $fillable = ['name'];
 
-    public function documents()
+    public function documents(): BelongsToMany
     {
         return $this->belongsToMany(Document::class, 'document_tags');
     }
-
 }
-

@@ -4,6 +4,7 @@ namespace App\Models;
 
 // use Illuminate\Contracts\Auth\MustVerifyEmail;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Laravel\Fortify\TwoFactorAuthenticatable;
@@ -50,8 +51,33 @@ class User extends Authenticatable
         ];
     }
 
-    public function roles()
+    public function events(): HasMany
     {
-        return $this->belongsToMany(Role::class, 'user_roles');
+        return $this->hasMany(CalendarEvent::class, 'user_id');
+    }
+
+    public function eventCategories(): HasMany
+    {
+        return $this->hasMany(EventCategory::class);
+    }
+
+    public function eventAttendances(): HasMany
+    {
+        return $this->hasMany(EventAttendee::class);
+    }
+
+    public function documents(): HasMany
+    {
+        return $this->hasMany(Document::class);
+    }
+
+    public function documentAccessRequests(): HasMany
+    {
+        return $this->hasMany(DocumentAccessRequest::class, 'user_id');
+    }
+
+    public function reviewedAccessRequests(): HasMany
+    {
+        return $this->hasMany(DocumentAccessRequest::class, 'reviewed_by');
     }
 }

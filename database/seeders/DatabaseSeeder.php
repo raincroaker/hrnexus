@@ -2,68 +2,121 @@
 
 namespace Database\Seeders;
 
-use App\Models\User;
-use App\Models\Role;
+use App\Models\Department;
 use App\Models\Employee;
+use App\Models\Position;
+use App\Models\User;
 use Illuminate\Database\Seeder;
 
 class DatabaseSeeder extends Seeder
 {
+    private int $employeeCounter = 1;
+
     public function run(): void
     {
-        // 1️⃣ Seed roles
+        // 1️⃣ Seed departments and positions first
         $this->call([
-            RoleSeeder::class,
+            DepartmentSeeder::class,
+            PositionSeeder::class,
         ]);
 
-        // 2️⃣ Define accounts
-        $accounts = [
-            [
-                'name' => 'Admin User',
-                'email' => 'admin@example.com',
-                'role' => 'Admin',
-                'employee_code' => 'EMP0001',
-            ],
-            [
-                'name' => 'Manager User',
-                'email' => 'manager@example.com',
-                'role' => 'Department Manager',
-                'employee_code' => 'EMP0002',
-            ],
-            [
-                'name' => 'Employee User',
-                'email' => 'employee@example.com',
-                'role' => 'Employee',
-                'employee_code' => 'EMP0003',
-            ],
-        ];
+        // 2️⃣ Create Admin User (only 1 admin, from HR department)
+        $hrDepartment = Department::where('code', 'HR')->first();
+        $hrPositions = $hrDepartment?->positions;
+        $adminPosition = $hrPositions?->where('name', 'like', '%Manager%')->first() ?? $hrPositions?->first();
 
-        foreach ($accounts as $data) {
-            // 2a. Create employee first
-            $employee = Employee::create([
-                'department_id' => null,
-                'position_id' => null,
-                'employee_code' => $data['employee_code'],
-                'first_name' => explode(' ', $data['name'])[0],
-                'last_name' => explode(' ', $data['name'])[1] ?? '',
-                'email' => $data['email'],
-                'contact_number' => null,
-                'birth_date' => null,
-                'avatar' => null,
+        $this->createEmployee([
+            'first_name' => 'Admin',
+            'last_name' => 'User',
+            'email' => 'admin@hrnexus.com',
+            'role' => 'admin',
+            'department_id' => $hrDepartment?->id,
+            'position_id' => $adminPosition?->id,
+        ]);
+
+        // 3️⃣ Create employees for each department
+        $departments = Department::all();
+
+        foreach ($departments as $department) {
+            $positions = $department->positions;
+
+            if ($positions->isEmpty()) {
+                $this->command->warn("No positions found for department {$department->name}. Skipping.");
+
+                continue;
+            }
+
+            // Create 1 department manager per department
+            $managerPosition = $positions->where('name', 'like', '%Manager%')->first() ?? $positions->first();
+            $managerFirstName = fake()->firstName();
+            $managerLastName = fake()->lastName();
+            $this->createEmployee([
+                'first_name' => $managerFirstName,
+                'last_name' => $managerLastName,
+                'email' => strtolower($department->code).'.manager@hrnexus.com',
+                'role' => 'department_manager',
+                'department_id' => $department->id,
+                'position_id' => $managerPosition->id,
             ]);
 
-            // 2b. Create user corresponding to employee
-            $user = User::factory()->create([
-                'name' => $data['name'],
-                'email' => $data['email'],
-                'password' => bcrypt('password'), // default password
-            ]);
+            // Create 5+ employees per department
+            $employeeCount = 5;
+            for ($i = 0; $i < $employeeCount; $i++) {
+                // Randomly assign a position (can duplicate)
+                $randomPosition = $positions->random();
+                $employeeFirstName = fake()->firstName();
+                $employeeLastName = fake()->lastName();
 
-            // 2c. Attach role
-            $role = Role::where('name', $data['role'])->first();
-            $user->roles()->attach($role);
+                $this->createEmployee([
+                    'first_name' => $employeeFirstName,
+                    'last_name' => $employeeLastName,
+                    'email' => strtolower($employeeLastName).'.'.strtolower($employeeFirstName).'@hrnexus.com',
+                    'role' => 'employee',
+                    'department_id' => $department->id,
+                    'position_id' => $randomPosition->id,
+                ]);
+            }
         }
 
-        $this->command->info('Roles, users, and employees seeded successfully!');
+        // 4️⃣ Seed attendance configuration and records
+        $this->call([
+            AttendanceSettingSeeder::class,
+            AttendanceSeeder::class,
+            BiometricLogSeeder::class,
+        ]);
+
+        // 5️⃣ Seed calendar events
+        $this->call([
+            EventCategorySeeder::class,
+            CalendarEventSeeder::class,
+            EventAttendeeSeeder::class,
+            ChatSeeder::class,
+        ]);
+
+        $this->command->info('Users, attendance settings, attendance records, biometric logs, and calendar events seeded successfully!');
+    }
+
+    private function createEmployee(array $data): void
+    {
+        $employeeCode = 'EMP'.str_pad((string) $this->employeeCounter++, 4, '0', STR_PAD_LEFT);
+
+        $employee = Employee::create([
+            'employee_code' => $employeeCode,
+            'first_name' => $data['first_name'],
+            'last_name' => $data['last_name'],
+            'email' => $data['email'],
+            'role' => $data['role'],
+            'department_id' => $data['department_id'],
+            'position_id' => $data['position_id'],
+            'contact_number' => fake()->phoneNumber(),
+            'birth_date' => fake()->date('Y-m-d', '-25 years'),
+            'avatar' => null,
+        ]);
+
+        User::factory()->create([
+            'name' => $data['first_name'].' '.$data['last_name'],
+            'email' => $data['email'],
+            'password' => bcrypt('password'), // default password
+        ]);
     }
 }

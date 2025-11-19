@@ -11,8 +11,10 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, Dialog
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Users, Building2, Search, Plus, Trash2, Edit, MoreVertical, Eye, Mail, Phone, Calendar, UserCircle, Check, X, Filter, Shield, Key } from 'lucide-vue-next';
+import { Users, Building2, Search, Plus, Trash2, Edit, MoreVertical, Eye, Mail, Phone, Calendar, UserCircle, Check, X, Filter, Shield, Key, Loader2 } from 'lucide-vue-next';
 import { ref, computed, watch } from 'vue';
+import api from '@/lib/axios';
+import { toast } from 'vue-sonner';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Label } from '@/components/ui/label';
 import {
@@ -24,6 +26,61 @@ import {
   PaginationPrevious,
 } from "@/components/ui/pagination";
 
+// Define props from Inertia
+interface Employee {
+    id: number;
+    employee_code: string;
+    name: string;
+    first_name: string;
+    last_name: string;
+    department: string;
+    department_id: number | null;
+    position: string;
+    position_id: number | null;
+    role: string;
+    email: string;
+    contact_number: string | null;
+    birth_date: string | null;
+    avatar: string | null;
+}
+
+interface Department {
+    id: number;
+    code: string;
+    name: string;
+}
+
+interface Position {
+    id: number;
+    name: string;
+    department: string;
+    department_id: number;
+}
+
+interface CurrentUser {
+    id: number;
+    name: string;
+    first_name: string;
+    last_name: string;
+    employee_code: string;
+    department: string;
+    department_id: number | null;
+    position: string;
+    position_id: number | null;
+    role: 'employee' | 'department_manager' | 'admin';
+    email: string;
+    contact_number: string | null;
+    birth_date: string | null;
+    avatar: string | null;
+}
+
+const props = defineProps<{
+    employees: Employee[];
+    departments: Department[];
+    positions: Position[];
+    currentUser: CurrentUser;
+}>();
+
 const breadcrumbs: BreadcrumbItem[] = [
     {
         title: 'Employees',
@@ -31,29 +88,35 @@ const breadcrumbs: BreadcrumbItem[] = [
     },
 ];
 
-// Current user info
+// Transform currentUser from backend format to component format
 const currentUser = ref({
-    name: 'Jerick Cruza',
-    employeeCode: 'EMP9999',
-    department: 'IT',
-    position: 'Senior Developer',
-    role: 'Admin',
-    email: 'cruza.jerick@hrnexus.com',
-    contactNum: '09092140862',
-    birthday: '2004-04-17',
-    avatar: ''
+    id: props.currentUser.id,
+    name: props.currentUser.name,
+    employeeCode: props.currentUser.employee_code,
+    department: props.currentUser.department,
+    department_id: props.currentUser.department_id,
+    position: props.currentUser.position,
+    position_id: props.currentUser.position_id,
+    role: props.currentUser.role, // Keep as enum value for conditional rendering
+    email: props.currentUser.email,
+    contactNum: props.currentUser.contact_number || '',
+    birthday: props.currentUser.birth_date || '',
+    avatar: props.currentUser.avatar || ''
 });
 
 // User Info Card edit dialog state
+// Note: This matches Employee model structure for API integration
+// Fields: first_name, last_name, employee_code, position_id, email, contact_number, birth_date, avatar
 const isUserInfoDialogOpen = ref(false);
+const originalAvatarUrl = ref<string | null>(null); // Track original avatar URL to detect changes
 const editedUserInfo = ref({
-    firstName: '',
-    lastName: '',
-    employeeCode: '',
-    position: '',
+    first_name: '',
+    last_name: '',
+    employee_code: '',
+    position_id: null as number | null,
     email: '',
-    contactNum: '',
-    birthday: '',
+    contact_number: '',
+    birth_date: '',
     avatar: '',
     newPassword: '',
     confirmPassword: ''
@@ -71,21 +134,24 @@ const handleUserInfoAvatarUpload = (event: Event) => {
         };
         reader.readAsDataURL(file);
     } else {
-        alert('Please upload a PNG or JPG image.');
+        toast.error('Please upload a PNG or JPG image.');
     }
 };
 
 // Function to open user info edit dialog
 const openUserInfoEdit = () => {
     // Populate form with current user data
-    const nameParts = currentUser.value.name.split(' ');
-    editedUserInfo.value.firstName = nameParts[0] || '';
-    editedUserInfo.value.lastName = nameParts.slice(1).join(' ') || '';
-    editedUserInfo.value.employeeCode = currentUser.value.employeeCode;
-    editedUserInfo.value.position = currentUser.value.position;
+    // Use first_name and last_name from props (controller sends them)
+    editedUserInfo.value.first_name = props.currentUser.first_name;
+    editedUserInfo.value.last_name = props.currentUser.last_name;
+    editedUserInfo.value.employee_code = currentUser.value.employeeCode;
+    // Use position_id from currentUser (already set from props)
+    editedUserInfo.value.position_id = currentUser.value.position_id;
     editedUserInfo.value.email = currentUser.value.email;
-    editedUserInfo.value.contactNum = currentUser.value.contactNum;
-    editedUserInfo.value.birthday = currentUser.value.birthday;
+    editedUserInfo.value.contact_number = currentUser.value.contactNum;
+    editedUserInfo.value.birth_date = currentUser.value.birthday;
+    // Store original avatar URL to detect if it changed
+    originalAvatarUrl.value = currentUser.value.avatar || null;
     editedUserInfo.value.avatar = currentUser.value.avatar || '';
     editedUserInfo.value.newPassword = '';
     editedUserInfo.value.confirmPassword = '';
@@ -100,72 +166,115 @@ const closeUserInfoEdit = () => {
 };
 
 // Function to save user info changes
-const saveUserInfo = () => {
+const saveUserInfo = async () => {
+    // Prevent double submission
+    if (isSubmittingEmployee.value) {
+        return;
+    }
+    
     // Validate password if provided
     if (editedUserInfo.value.newPassword) {
         if (editedUserInfo.value.newPassword !== editedUserInfo.value.confirmPassword) {
-            alert('Passwords do not match!');
+            toast.error('Passwords do not match!');
             return;
         }
         if (editedUserInfo.value.newPassword.length < 6) {
-            alert('Password must be at least 6 characters long!');
+            toast.error('Password must be at least 6 characters long!');
             return;
         }
-        // Here you would typically update the password on the backend
     }
     
-    // Combine firstName and lastName
-    if (editedUserInfo.value.firstName && editedUserInfo.value.lastName) {
-        currentUser.value.name = `${editedUserInfo.value.firstName} ${editedUserInfo.value.lastName}`;
+    // Check if avatar is a new Base64 image or unchanged
+    let avatarToSend: string | null = null;
+    if (editedUserInfo.value.avatar) {
+        // If it's a Base64 string (new upload), send it
+        if (editedUserInfo.value.avatar.startsWith('data:image/')) {
+            avatarToSend = editedUserInfo.value.avatar;
+        }
+        // If it's the same URL as original, send null (keep existing)
+        // If it's different URL (shouldn't happen, but handle it), send null
+        // The backend will keep the existing avatar if null/empty
     }
     
-    // Update other fields
-    currentUser.value.employeeCode = editedUserInfo.value.employeeCode;
-    currentUser.value.position = editedUserInfo.value.position;
-    currentUser.value.email = editedUserInfo.value.email;
-    currentUser.value.contactNum = editedUserInfo.value.contactNum;
-    currentUser.value.birthday = editedUserInfo.value.birthday;
-    currentUser.value.avatar = editedUserInfo.value.avatar;
+    // Prepare data matching Employee model structure
+    const employeePayload: any = {
+        first_name: editedUserInfo.value.first_name.trim(),
+        last_name: editedUserInfo.value.last_name.trim(),
+        employee_code: editedUserInfo.value.employee_code.trim(),
+        position_id: editedUserInfo.value.position_id || null,
+        email: editedUserInfo.value.email.trim(),
+        contact_number: editedUserInfo.value.contact_number?.trim() || null,
+        birth_date: editedUserInfo.value.birth_date || null,
+        avatar: avatarToSend,
+        role: currentUser.value.role // Keep current role
+    };
     
-    // Clear password fields
-    editedUserInfo.value.newPassword = '';
-    editedUserInfo.value.confirmPassword = '';
+    // Add password only if provided
+    if (editedUserInfo.value.newPassword) {
+        employeePayload.password = editedUserInfo.value.newPassword;
+    }
     
-    // Here you would typically save to backend
-    closeUserInfoEdit();
+    isSubmittingEmployee.value = true;
+    try {
+        const response = await api.put(`/employees/${currentUser.value.id}`, employeePayload);
+        
+        // Update local state with response data
+        const updatedEmployee = response.data.employee;
+        currentUser.value.name = updatedEmployee.name;
+        currentUser.value.employeeCode = updatedEmployee.employee_code;
+        const position = positions.value.find(p => p.id === updatedEmployee.position_id);
+        currentUser.value.position = position?.name || updatedEmployee.position;
+        currentUser.value.position_id = updatedEmployee.position_id;
+        currentUser.value.email = updatedEmployee.email;
+        currentUser.value.contactNum = updatedEmployee.contact_number || '';
+        currentUser.value.birthday = updatedEmployee.birth_date || '';
+        currentUser.value.avatar = updatedEmployee.avatar || '';
+        
+        toast.success(response.data.message || 'Profile updated successfully');
+        closeUserInfoEdit();
+        
+        // Reload page to refresh CSRF token and ensure data consistency
+        setTimeout(() => {
+            window.location.reload();
+        }, 500); // Small delay to show the success toast
+    } catch (error: any) {
+        // Show specific error message
+        if (error.response?.data?.message) {
+            toast.error(error.response.data.message);
+        } else if (error.response?.data?.errors) {
+            const errors = error.response.data.errors;
+            const errorMessages = Object.values(errors).flat().join(', ');
+            toast.error(errorMessages || 'Failed to update profile');
+        } else {
+            toast.error('Failed to update profile. Please try again.');
+        }
+        console.error('Error updating profile:', error);
+    } finally {
+        isSubmittingEmployee.value = false;
+    }
 };
 
-// Dummy data for departments
-const departments = ref([
-    { id: 1, code: 'ENG', name: 'Engineering', employeeCount: 12, manager: 'John Doe', description: 'Software development and technical operations' },
-    { id: 2, code: 'MKT', name: 'Marketing', employeeCount: 8, manager: 'Jane Smith', description: 'Brand management and digital marketing' },
-    { id: 3, code: 'HR', name: 'HR', employeeCount: 5, manager: 'Sarah Williams', description: 'Human resources and recruitment' },
-    { id: 4, code: 'SAL', name: 'Sales', employeeCount: 10, manager: 'Tom Brown', description: 'Sales and business development' },
-    { id: 5, code: 'FIN', name: 'Finance', employeeCount: 6, manager: 'Emily Davis', description: 'Financial planning and accounting' },
-    { id: 6, code: 'IT', name: 'IT', employeeCount: 7, manager: 'Alex Chen', description: 'IT infrastructure and support' },
-    { id: 7, code: 'DES', name: 'Design', employeeCount: 4, manager: 'Lisa Park', description: 'UI/UX and graphic design' },
-    { id: 8, code: 'QA', name: 'QA', employeeCount: 5, manager: 'Mark Rodriguez', description: 'Quality assurance and testing' },
-    { id: 9, code: 'OPS', name: 'Operations', employeeCount: 9, manager: 'Rachel Kim', description: 'Business operations and logistics' },
-]);
+// Departments from backend (already formatted correctly)
+const departments = ref(props.departments);
 
-// Dummy data for all employees with complete information
-const allEmployees = ref([
-    { id: 1, userId: 'USR001', employeeCode: 'EMP001', name: 'John Doe', department: 'Engineering', position: 'Senior Developer', role: 'Admin', email: 'john.doe@company.com', contactNum: '+63 917 123 4567', birthday: '1990-05-15' },
-    { id: 2, userId: 'USR002', employeeCode: 'EMP002', name: 'Jane Smith', department: 'Marketing', position: 'Marketing Manager', role: 'Department Manager', email: 'jane.smith@company.com', contactNum: '+63 918 234 5678', birthday: '1988-08-22' },
-    { id: 3, userId: 'USR003', employeeCode: 'EMP003', name: 'Mike Johnson', department: 'Engineering', position: 'Frontend Developer', role: 'Employee', email: 'mike.johnson@company.com', contactNum: '+63 919 345 6789', birthday: '1992-03-10' },
-    { id: 4, userId: 'USR004', employeeCode: 'EMP004', name: 'Sarah Williams', department: 'HR', position: 'HR Specialist', role: 'Department Manager', email: 'sarah.williams@company.com', contactNum: '+63 920 456 7890', birthday: '1991-11-30' },
-    { id: 5, userId: 'USR005', employeeCode: 'EMP005', name: 'Tom Brown', department: 'Sales', position: 'Sales Executive', role: 'Employee', email: 'tom.brown@company.com', contactNum: '+63 921 567 8901', birthday: '1989-07-18' },
-    { id: 6, userId: 'USR006', employeeCode: 'EMP006', name: 'Emily Davis', department: 'Finance', position: 'Accountant', role: 'Employee', email: 'emily.davis@company.com', contactNum: '+63 922 678 9012', birthday: '1993-02-25' },
-    { id: 7, userId: 'USR007', employeeCode: 'EMP007', name: 'David Wilson', department: 'Engineering', position: 'Backend Developer', role: 'Employee', email: 'david.wilson@company.com', contactNum: '+63 923 789 0123', birthday: '1991-09-12' },
-    { id: 8, userId: 'USR008', employeeCode: 'EMP008', name: 'Alex Chen', department: 'IT', position: 'System Admin', role: 'Department Manager', email: 'alex.chen@company.com', contactNum: '+63 924 890 1234', birthday: '1990-12-05' },
-    { id: 9, userId: 'USR009', employeeCode: 'EMP009', name: 'Lisa Park', department: 'Design', position: 'UI Designer', role: 'Employee', email: 'lisa.park@company.com', contactNum: '+63 925 901 2345', birthday: '1994-04-20' },
-    { id: 10, userId: 'USR010', employeeCode: 'EMP010', name: 'Mark Rodriguez', department: 'QA', position: 'QA Tester', role: 'Employee', email: 'mark.rodriguez@company.com', contactNum: '+63 926 012 3456', birthday: '1992-06-08' },
-    { id: 11, userId: 'USR011', employeeCode: 'EMP011', name: 'Rachel Kim', department: 'Operations', position: 'Operations Manager', role: 'Department Manager', email: 'rachel.kim@company.com', contactNum: '+63 927 123 4567', birthday: '1987-10-14' },
-    { id: 12, userId: 'USR012', employeeCode: 'EMP012', name: 'Chris Anderson', department: 'Engineering', position: 'DevOps Engineer', role: 'Employee', email: 'chris.anderson@company.com', contactNum: '+63 928 234 5678', birthday: '1991-01-28' },
-    { id: 13, userId: 'USR013', employeeCode: 'EMP013', name: 'Amanda Lee', department: 'Marketing', position: 'Content Writer', role: 'Employee', email: 'amanda.lee@company.com', contactNum: '+63 929 345 6789', birthday: '1993-08-16' },
-    { id: 14, userId: 'USR014', employeeCode: 'EMP014', name: 'Robert Taylor', department: 'Sales', position: 'Sales Representative', role: 'Employee', email: 'robert.taylor@company.com', contactNum: '+63 930 456 7890', birthday: '1990-03-22' },
-    { id: 15, userId: 'USR015', employeeCode: 'EMP015', name: 'Jessica Martinez', department: 'Finance', position: 'Financial Analyst', role: 'Employee', email: 'jessica.martinez@company.com', contactNum: '+63 931 567 8901', birthday: '1992-11-09' },
-]);
+// Transform employees from backend format to component format
+// Backend provides: employee_code, contact_number, birth_date
+// Component expects: employeeCode, contactNum, birthday
+const allEmployees = ref(props.employees.map(emp => ({
+    id: emp.id,
+    employeeCode: emp.employee_code,
+    name: emp.name,
+    department: emp.department,
+    department_id: emp.department_id,
+    position: emp.position,
+    position_id: emp.position_id,
+    role: emp.role === 'employee' ? 'Employee' : 
+          emp.role === 'department_manager' ? 'Department Manager' : 'Admin',
+    email: emp.email,
+    contactNum: emp.contact_number || '',
+    birthday: emp.birth_date || '',
+    avatar: emp.avatar || ''
+})));
 
 // Search states
 const employeeSearch = ref('');
@@ -190,7 +299,10 @@ const itemsPerPage = 10;
 
 // Computed filtered employees for Departments tab (only current user's department)
 const filteredDepartmentEmployees = computed(() => {
-    let filtered = allEmployees.value.filter(emp => emp.department === currentUser.value.department);
+    let filtered = allEmployees.value.filter(emp => 
+        emp.department === currentUser.value.department && 
+        emp.id !== currentUser.value.id // Exclude current user
+    );
     
     // Search filter
     if (employeeSearch.value) {
@@ -217,7 +329,7 @@ const filteredDepartmentEmployees = computed(() => {
 
 // Computed filtered employees for All Employees tab
 const filteredEmployees = computed(() => {
-    let filtered = allEmployees.value;
+    let filtered = allEmployees.value.filter(emp => emp.id !== currentUser.value.id); // Exclude current user
     
     // Search filter
     if (employeeSearch.value) {
@@ -331,6 +443,7 @@ const positionDepartmentFilter = ref('all'); // Filter for positions by departme
 // Department dialog state
 const isDepartmentDialogOpen = ref(false);
 const isAddingDepartment = ref(false);
+const isSubmittingDepartment = ref(false);
 const newDepartmentCode = ref('');
 const newDepartmentName = ref('');
 const editingDepartmentId = ref<number | null>(null);
@@ -344,22 +457,47 @@ const deleteTimerInterval = ref<number | null>(null);
 const dialogToReopenAfterDelete = ref<'position' | 'department' | null>(null); // Track which dialog to reopen if delete is cancelled
 
 // Function to add new department
-const addNewDepartment = () => {
-    if (newDepartmentCode.value.trim() && newDepartmentName.value.trim()) {
-        const newDept = {
-            id: departments.value.length + 1,
-            code: newDepartmentCode.value,
-            name: newDepartmentName.value,
-            manager: '',
-            description: '',
-            employeeCount: 0
-        };
-        departments.value.push(newDept);
+const addNewDepartment = async () => {
+    // Prevent double submission
+    if (isSubmittingDepartment.value) {
+        return;
+    }
+    
+    if (!newDepartmentCode.value.trim() || !newDepartmentName.value.trim()) {
+        toast.error('Department code and name are required!');
+        return;
+    }
+    
+    // Prepare data matching Department model structure
+    const departmentPayload = {
+        code: newDepartmentCode.value.trim().toUpperCase(),
+        name: newDepartmentName.value.trim(),
+    }
+    
+    isSubmittingDepartment.value = true;
+    try {
+        const response = await api.post('/departments', departmentPayload);
+        
+        // Add new department to local state
+        departments.value.push(response.data.department);
         
         // Reset form
         newDepartmentCode.value = '';
         newDepartmentName.value = '';
         isAddingDepartment.value = false;
+        
+        toast.success('Department created successfully');
+    } catch (error: any) {
+        if (error.response?.status === 422) {
+            // Validation errors
+            const errors = error.response.data.errors;
+            const errorMessages = Object.values(errors).flat().join(', ');
+            toast.error(errorMessages || 'Validation failed');
+        } else {
+            toast.error(error.response?.data?.message || 'Failed to create department');
+        }
+    } finally {
+        isSubmittingDepartment.value = false;
     }
 };
 
@@ -376,8 +514,53 @@ const startEditDepartment = (department: any) => {
 };
 
 // Function to save edited department
-const saveEditDepartment = () => {
-    editingDepartmentId.value = null;
+const saveEditDepartment = async () => {
+    // Prevent double submission
+    if (isSubmittingDepartment.value) {
+        return;
+    }
+    
+    const department = departments.value.find(d => d.id === editingDepartmentId.value);
+    if (!department) {
+        editingDepartmentId.value = null;
+        return;
+    }
+    
+    if (!department.code.trim() || !department.name.trim()) {
+        toast.error('Department code and name are required!');
+        return;
+    }
+    
+    // Prepare data matching Department model structure
+    const departmentPayload = {
+        code: department.code.trim().toUpperCase(),
+        name: department.name.trim(),
+    }
+    
+    isSubmittingDepartment.value = true;
+    try {
+        const response = await api.put(`/departments/${editingDepartmentId.value}`, departmentPayload);
+        
+        // Update local state with response data
+        const index = departments.value.findIndex(d => d.id === editingDepartmentId.value);
+        if (index !== -1) {
+            departments.value[index] = response.data.department;
+        }
+        
+        toast.success('Department updated successfully');
+        editingDepartmentId.value = null;
+    } catch (error: any) {
+        if (error.response?.status === 422) {
+            // Validation errors
+            const errors = error.response.data.errors;
+            const errorMessages = Object.values(errors).flat().join(', ');
+            toast.error(errorMessages || 'Validation failed');
+        } else {
+            toast.error(error.response?.data?.message || 'Failed to update department');
+        }
+    } finally {
+        isSubmittingDepartment.value = false;
+    }
 };
 
 // Function to cancel editing department
@@ -423,27 +606,41 @@ const closeDeleteDialog = () => {
 };
 
 // Function to confirm delete
-const confirmDelete = () => {
+const confirmDelete = async () => {
     if (deleteItemId.value === null) return;
     
-    if (deleteType.value === 'department') {
-        departments.value = departments.value.filter(d => d.id !== deleteItemId.value);
-    } else if (deleteType.value === 'position') {
-        positions.value = positions.value.filter(p => p.id !== deleteItemId.value);
-    } else if (deleteType.value === 'employee') {
-        allEmployees.value = allEmployees.value.filter(e => e.id !== deleteItemId.value);
+    try {
+        if (deleteType.value === 'department') {
+            await api.delete(`/departments/${deleteItemId.value}`);
+            departments.value = departments.value.filter(d => d.id !== deleteItemId.value);
+            toast.success('Department deleted successfully');
+        } else if (deleteType.value === 'position') {
+            await api.delete(`/positions/${deleteItemId.value}`);
+            positions.value = positions.value.filter(p => p.id !== deleteItemId.value);
+            toast.success('Position deleted successfully');
+        } else if (deleteType.value === 'employee') {
+            await api.delete(`/employees/${deleteItemId.value}`);
+            allEmployees.value = allEmployees.value.filter(e => e.id !== deleteItemId.value);
+            toast.success('Employee deleted successfully');
+        }
+        
+        // Clear the dialog to reopen since item is deleted
+        dialogToReopenAfterDelete.value = null;
+        
+        if (deleteTimerInterval.value) {
+            clearInterval(deleteTimerInterval.value);
+        }
+        isDeleteDialogOpen.value = false;
+        deleteType.value = null;
+        deleteItemId.value = null;
+        deleteTimer.value = 5;
+    } catch (error: any) {
+        if (error.response?.status === 422) {
+            toast.error(error.response.data.message || 'Cannot delete this item');
+        } else {
+            toast.error(error.response?.data?.message || 'Failed to delete item');
+        }
     }
-    
-    // Clear the dialog to reopen since item is deleted
-    dialogToReopenAfterDelete.value = null;
-    
-    if (deleteTimerInterval.value) {
-        clearInterval(deleteTimerInterval.value);
-    }
-    isDeleteDialogOpen.value = false;
-    deleteType.value = null;
-    deleteItemId.value = null;
-    deleteTimer.value = 5;
 };
 
 // Function to delete department (kept for compatibility)
@@ -476,7 +673,7 @@ const handleAvatarUpload = (event: Event) => {
         };
         reader.readAsDataURL(file);
     } else {
-        alert('Please upload a PNG or JPG image.');
+        toast.error('Please upload a PNG or JPG image.');
     }
 };
 
@@ -492,26 +689,30 @@ const handleNewEmployeeAvatarUpload = (event: Event) => {
         };
         reader.readAsDataURL(file);
     } else {
-        alert('Please upload a PNG or JPG image.');
+        toast.error('Please upload a PNG or JPG image.');
     }
 };
 
 // Add employee dialog state
+// Note: Matches Employee model structure for API integration
+// Fields: first_name, last_name, department_id, position_id, employee_code, email, contact_number, birth_date, avatar, role
 const isAddEmployeeDialogOpen = ref(false);
 const addEmployeeStep = ref(1); // Track current step (1 or 2)
 const isAddingFromDepartmentsTab = ref(false); // Track if adding from Departments tab
+const isSubmittingEmployee = ref(false);
 const newEmployee = ref({
-    firstName: '',
-    lastName: '',
-    department: '',
-    position: '',
-    employeeCode: '',
+    first_name: '',
+    last_name: '',
+    department_id: null as number | null,
+    position_id: null as number | null,
+    employee_code: '',
     email: '',
-    contactNum: '',
-    birthday: '',
+    contact_number: '',
+    birth_date: '',
     password: '',
     confirmPassword: '',
-    avatar: ''
+    avatar: '',
+    role: 'employee' as 'employee' | 'department_manager' | 'admin' // Default role
 });
 
 // Function to open add employee dialog
@@ -519,18 +720,21 @@ const openAddEmployeeDialog = (fromDepartmentsTab = false) => {
     isAddingFromDepartmentsTab.value = fromDepartmentsTab;
     
     // Reset form
+    // If from Departments tab, auto-set department_id to current user's department
+    const currentUserDept = departments.value.find(d => d.name === currentUser.value.department);
     newEmployee.value = {
-        firstName: '',
-        lastName: '',
-        department: fromDepartmentsTab ? currentUser.value.department : '', // Auto-set department if from Departments tab
-        position: '',
-        employeeCode: '',
+        first_name: '',
+        last_name: '',
+        department_id: fromDepartmentsTab ? (currentUserDept?.id || null) : null,
+        position_id: null,
+        employee_code: '',
         email: '',
-        contactNum: '',
-        birthday: '',
+        contact_number: '',
+        birth_date: '',
         password: '',
         confirmPassword: '',
-        avatar: ''
+        avatar: '',
+        role: 'employee'
     };
     addEmployeeStep.value = 1; // Reset to first step
     isAddEmployeeDialogOpen.value = true;
@@ -538,10 +742,10 @@ const openAddEmployeeDialog = (fromDepartmentsTab = false) => {
 
 // Function to go to next step
 const goToNextStep = () => {
-    if (newEmployee.value.firstName.trim() && 
-        newEmployee.value.lastName.trim() &&
-        newEmployee.value.department.trim() && 
-        newEmployee.value.employeeCode.trim()) {
+    if (newEmployee.value.first_name.trim() && 
+        newEmployee.value.last_name.trim() &&
+        newEmployee.value.department_id && 
+        newEmployee.value.employee_code.trim()) {
         addEmployeeStep.value = 2;
     }
 };
@@ -552,63 +756,145 @@ const goToPreviousStep = () => {
 };
 
 // Function to add new employee
-const addNewEmployee = () => {
-    // Validate password match
-    if (newEmployee.value.password !== newEmployee.value.confirmPassword) {
-        alert('Passwords do not match!');
+const addNewEmployee = async () => {
+    // Prevent double submission
+    if (isSubmittingEmployee.value) {
         return;
     }
     
-    if (newEmployee.value.email.trim() && 
-        newEmployee.value.password.trim()) {
+    // Validate password match
+    if (newEmployee.value.password !== newEmployee.value.confirmPassword) {
+        toast.error('Passwords do not match!');
+        return;
+    }
+    
+    if (!newEmployee.value.email.trim() || !newEmployee.value.password.trim()) {
+        toast.error('Email and password are required!');
+        return;
+    }
+    
+    // Validate required fields
+    if (!newEmployee.value.first_name.trim() || !newEmployee.value.last_name.trim()) {
+        toast.error('First name and last name are required!');
+        return;
+    }
+    
+    if (!newEmployee.value.department_id) {
+        toast.error('Department is required!');
+        return;
+    }
+    
+    if (!newEmployee.value.employee_code.trim()) {
+        toast.error('Employee code is required!');
+        return;
+    }
+    
+    // Prepare data matching Employee model structure
+    // Only send avatar if it's a Base64 string (new upload), otherwise send null
+    let avatarToSend: string | null = null;
+    if (newEmployee.value.avatar && newEmployee.value.avatar.startsWith('data:image/')) {
+        avatarToSend = newEmployee.value.avatar;
+    }
+    
+    const employeePayload = {
+        first_name: newEmployee.value.first_name.trim(),
+        last_name: newEmployee.value.last_name.trim(),
+        department_id: newEmployee.value.department_id,
+        position_id: newEmployee.value.position_id || null,
+        employee_code: newEmployee.value.employee_code.trim(),
+        email: newEmployee.value.email.trim(),
+        contact_number: newEmployee.value.contact_number?.trim() || null,
+        birth_date: newEmployee.value.birth_date || null,
+        avatar: avatarToSend,
+        role: newEmployee.value.role,
+        password: newEmployee.value.password
+    };
+    
+    isSubmittingEmployee.value = true;
+    try {
+        const response = await api.post('/employees', employeePayload);
         
-        const fullName = `${newEmployee.value.firstName} ${newEmployee.value.lastName}`;
-        
+        // Transform response to match frontend format
         const newEmp = {
-            id: allEmployees.value.length + 1,
-            userId: `USR${String(allEmployees.value.length + 1).padStart(3, '0')}`,
-            employeeCode: newEmployee.value.employeeCode,
-            name: fullName,
-            department: newEmployee.value.department,
-            position: newEmployee.value.position,
-            role: 'Employee', // Default role
-            email: newEmployee.value.email,
-            contactNum: newEmployee.value.contactNum,
-            birthday: newEmployee.value.birthday,
-            avatar: newEmployee.value.avatar
+            id: response.data.employee.id,
+            employeeCode: response.data.employee.employee_code,
+            name: response.data.employee.name,
+            first_name: response.data.employee.first_name,
+            last_name: response.data.employee.last_name,
+            department: response.data.employee.department,
+            department_id: response.data.employee.department_id,
+            position: response.data.employee.position,
+            position_id: response.data.employee.position_id,
+            role: formatRole(response.data.employee.role),
+            email: response.data.employee.email,
+            contactNum: response.data.employee.contact_number || '',
+            birthday: response.data.employee.birth_date || '',
+            avatar: response.data.employee.avatar || ''
         };
         
         allEmployees.value.push(newEmp);
+        toast.success(response.data.message || 'Employee created successfully');
         isAddEmployeeDialogOpen.value = false;
         addEmployeeStep.value = 1; // Reset step
         
         // Reset form
+        const currentUserDept = departments.value.find(d => d.name === currentUser.value.department);
         newEmployee.value = {
-            firstName: '',
-            lastName: '',
-            department: '',
-            position: '',
-            employeeCode: '',
+            first_name: '',
+            last_name: '',
+            department_id: isAddingFromDepartmentsTab.value ? (currentUserDept?.id || null) : null,
+            position_id: null,
+            employee_code: '',
             email: '',
-            contactNum: '',
-            birthday: '',
+            contact_number: '',
+            birth_date: '',
             password: '',
             confirmPassword: '',
-            avatar: ''
+            avatar: '',
+            role: 'employee'
         };
+    } catch (error: any) {
+        // Show specific error message
+        if (error.response?.data?.message) {
+            toast.error(error.response.data.message);
+        } else if (error.response?.data?.errors) {
+            const errors = error.response.data.errors;
+            const errorMessages = Object.values(errors).flat().join(', ');
+            toast.error(errorMessages || 'Failed to create employee');
+        } else {
+            toast.error('Failed to create employee. Please try again.');
+        }
+        console.error('Error creating employee:', error);
+    } finally {
+        isSubmittingEmployee.value = false;
     }
 };
 
 // Function to view employee details
 const viewEmployeeDetails = (employee: any, fromAllEmployees = false) => {
     const nameParts = employee.name.split(' ');
-    const firstName = nameParts[0] || '';
-    const lastName = nameParts.slice(1).join(' ') || '';
+    const first_name = nameParts[0] || '';
+    const last_name = nameParts.slice(1).join(' ') || '';
+    
+    // Find department and position IDs (in production, these would come from backend)
+    const department = departments.value.find(d => d.name === employee.department);
+    const position = positions.value.find(p => p.name === employee.position);
+    
+    // Map role display value to enum value
+    let role: 'employee' | 'department_manager' | 'admin' = 'employee';
+    if (employee.role === 'Admin') role = 'admin';
+    else if (employee.role === 'Department Manager') role = 'department_manager';
     
     selectedEmployee.value = { 
         ...employee,
-        firstName,
-        lastName,
+        first_name,
+        last_name,
+        department_id: department?.id || null,
+        position_id: position?.id || null,
+        employee_code: employee.employeeCode,
+        contact_number: employee.contactNum,
+        birth_date: employee.birthday,
+        role,
         newPassword: '',
         confirmPassword: ''
     };
@@ -620,12 +906,16 @@ const viewEmployeeDetails = (employee: any, fromAllEmployees = false) => {
 // Function to toggle edit mode
 const toggleEditMode = () => {
     if (isEditMode.value) {
-        // If canceling edit, restore original name and clear password fields
+        // If canceling edit, restore original data and clear password fields
         const employee = allEmployees.value.find(e => e.id === selectedEmployee.value.id);
         if (employee) {
             const nameParts = employee.name.split(' ');
-            selectedEmployee.value.firstName = nameParts[0] || '';
-            selectedEmployee.value.lastName = nameParts.slice(1).join(' ') || '';
+            selectedEmployee.value.first_name = nameParts[0] || '';
+            selectedEmployee.value.last_name = nameParts.slice(1).join(' ') || '';
+            const department = departments.value.find(d => d.name === employee.department);
+            const position = positions.value.find(p => p.name === employee.position);
+            selectedEmployee.value.department_id = department?.id || null;
+            selectedEmployee.value.position_id = position?.id || null;
         }
         selectedEmployee.value.newPassword = '';
         selectedEmployee.value.confirmPassword = '';
@@ -634,67 +924,185 @@ const toggleEditMode = () => {
 };
 
 // Function to save employee details
-const saveEmployeeDetails = () => {
+const saveEmployeeDetails = async () => {
+    // Prevent double submission
+    if (isSubmittingEmployee.value) {
+        return;
+    }
+    
     // Validate password if provided
     if (selectedEmployee.value.newPassword) {
         if (selectedEmployee.value.newPassword !== selectedEmployee.value.confirmPassword) {
-            alert('Passwords do not match!');
+            toast.error('Passwords do not match!');
             return;
         }
         if (selectedEmployee.value.newPassword.length < 6) {
-            alert('Password must be at least 6 characters long!');
+            toast.error('Password must be at least 6 characters long!');
             return;
         }
-        // Here you would typically update the password on the backend
-        // For now, we'll just clear the password fields
     }
     
-    // Combine firstName and lastName back to name
-    if (selectedEmployee.value.firstName && selectedEmployee.value.lastName) {
-        selectedEmployee.value.name = `${selectedEmployee.value.firstName} ${selectedEmployee.value.lastName}`;
+    // Check if avatar is a new Base64 image or unchanged
+    let avatarToSend: string | null = null;
+    if (selectedEmployee.value.avatar) {
+        // If it's a Base64 string (new upload), send it
+        if (selectedEmployee.value.avatar.startsWith('data:image/')) {
+            avatarToSend = selectedEmployee.value.avatar;
+        }
+        // If it's a URL string (unchanged avatar), send null (keep existing)
+        // The backend will keep the existing avatar if null/empty
     }
     
-    // Update the employee in the list
-    const index = allEmployees.value.findIndex(e => e.id === selectedEmployee.value.id);
-    if (index !== -1) {
-        allEmployees.value[index] = { ...selectedEmployee.value };
+    // Convert role display value back to enum value if needed
+    let roleValue: 'employee' | 'department_manager' | 'admin' = selectedEmployee.value.role;
+    if (typeof selectedEmployee.value.role === 'string') {
+        if (selectedEmployee.value.role === 'Admin') roleValue = 'admin';
+        else if (selectedEmployee.value.role === 'Department Manager') roleValue = 'department_manager';
+        else if (selectedEmployee.value.role === 'Employee') roleValue = 'employee';
     }
     
-    // Clear password fields
-    selectedEmployee.value.newPassword = '';
-    selectedEmployee.value.confirmPassword = '';
+    // Prepare data matching Employee model structure
+    const employeePayload: any = {
+        first_name: selectedEmployee.value.first_name.trim(),
+        last_name: selectedEmployee.value.last_name.trim(),
+        department_id: selectedEmployee.value.department_id || null,
+        position_id: selectedEmployee.value.position_id || null,
+        employee_code: selectedEmployee.value.employee_code.trim(),
+        email: selectedEmployee.value.email.trim(),
+        contact_number: selectedEmployee.value.contact_number?.trim() || null,
+        birth_date: selectedEmployee.value.birth_date || null,
+        avatar: avatarToSend,
+        role: roleValue
+    };
     
-    // Here you would typically save to backend
-    isEditMode.value = false;
+    // Add password only if provided
+    if (selectedEmployee.value.newPassword) {
+        employeePayload.password = selectedEmployee.value.newPassword;
+    }
+    
+    isSubmittingEmployee.value = true;
+    try {
+        const response = await api.put(`/employees/${selectedEmployee.value.id}`, employeePayload);
+        
+        // Update local state with response data
+        const updatedEmployee = response.data.employee;
+        selectedEmployee.value.name = updatedEmployee.name;
+        selectedEmployee.value.first_name = updatedEmployee.first_name;
+        selectedEmployee.value.last_name = updatedEmployee.last_name;
+        selectedEmployee.value.department = updatedEmployee.department;
+        selectedEmployee.value.department_id = updatedEmployee.department_id;
+        selectedEmployee.value.position = updatedEmployee.position;
+        selectedEmployee.value.position_id = updatedEmployee.position_id;
+        selectedEmployee.value.employeeCode = updatedEmployee.employee_code;
+        selectedEmployee.value.contactNum = updatedEmployee.contact_number || '';
+        selectedEmployee.value.birthday = updatedEmployee.birth_date || '';
+        selectedEmployee.value.avatar = updatedEmployee.avatar || '';
+        selectedEmployee.value.role = formatRole(updatedEmployee.role);
+        
+        // Update the employee in the list
+        const index = allEmployees.value.findIndex(e => e.id === selectedEmployee.value.id);
+        if (index !== -1) {
+            allEmployees.value[index] = {
+                ...allEmployees.value[index],
+                ...selectedEmployee.value
+            };
+        }
+        
+        toast.success(response.data.message || 'Employee updated successfully');
+        isEditMode.value = false;
+        selectedEmployee.value.newPassword = '';
+        selectedEmployee.value.confirmPassword = '';
+    } catch (error: any) {
+        // Show specific error message
+        if (error.response?.data?.message) {
+            toast.error(error.response.data.message);
+        } else if (error.response?.data?.errors) {
+            const errors = error.response.data.errors;
+            const errorMessages = Object.values(errors).flat().join(', ');
+            toast.error(errorMessages || 'Failed to update employee');
+        } else {
+            toast.error('Failed to update employee. Please try again.');
+        }
+        console.error('Error updating employee:', error);
+    } finally {
+        isSubmittingEmployee.value = false;
+    }
 };
 
 // Watch for department changes in All Employees tab to reset position
-watch(() => selectedEmployee.value?.department, (newDept, oldDept) => {
-    if (isFromAllEmployeesTab.value && isEditMode.value && newDept !== oldDept && oldDept !== undefined) {
-        // Reset position when department changes
-        selectedEmployee.value.position = '';
+watch(() => selectedEmployee.value?.department_id, (newDeptId, oldDeptId) => {
+    if (isFromAllEmployeesTab.value && isEditMode.value && newDeptId !== oldDeptId && oldDeptId !== undefined) {
+        // Reset position_id when department changes (positions are department-specific)
+        selectedEmployee.value.position_id = null;
     }
 });
 
 // Add position state
+// Note: Matches Position model structure for API integration
+// Fields: department_id (required), name (required)
 const isAddingPosition = ref(false);
+const isSubmittingPosition = ref(false);
 const newPositionName = ref('');
-const newPositionDepartment = ref('');
+const newPositionDepartment = ref<number | string>(''); // Can be department ID or name for local handling
 
 // Function to add new position
-const addNewPosition = () => {
-    if (newPositionName.value.trim() && newPositionDepartment.value.trim()) {
-        const newPosition = {
-            id: positions.value.length + 1,
-            name: newPositionName.value,
-            department: newPositionDepartment.value
-        };
-        positions.value.push(newPosition);
+const addNewPosition = async () => {
+    // Prevent double submission
+    if (isSubmittingPosition.value) {
+        return;
+    }
+    
+    if (!newPositionName.value.trim()) {
+        toast.error('Position name is required!');
+        return;
+    }
+    
+    // Find department ID
+    let departmentId: number | null = null;
+    if (typeof newPositionDepartment.value === 'number') {
+        departmentId = newPositionDepartment.value;
+    } else {
+        const department = departments.value.find(d => 
+            d.name === newPositionDepartment.value || d.id === Number(newPositionDepartment.value)
+        );
+        departmentId = department?.id || null;
+    }
+    
+    if (!departmentId) {
+        toast.error('Department is required!');
+        return;
+    }
+    
+    // Prepare data matching Position model structure
+    const positionPayload = {
+        department_id: departmentId,
+        name: newPositionName.value.trim(),
+    }
+    
+    isSubmittingPosition.value = true;
+    try {
+        const response = await api.post('/positions', positionPayload);
+        
+        // Add new position to local state
+        positions.value.push(response.data.position);
         
         // Reset form
         newPositionName.value = '';
         newPositionDepartment.value = '';
         isAddingPosition.value = false;
+        
+        toast.success('Position created successfully');
+    } catch (error: any) {
+        if (error.response?.status === 422) {
+            // Validation errors
+            const errors = error.response.data.errors;
+            const errorMessages = Object.values(errors).flat().join(', ');
+            toast.error(errorMessages || 'Validation failed');
+        } else {
+            toast.error(error.response?.data?.message || 'Failed to create position');
+        }
+    } finally {
+        isSubmittingPosition.value = false;
     }
 };
 
@@ -720,8 +1128,61 @@ const startEditPosition = (position: any) => {
 };
 
 // Function to save edited position
-const saveEditPosition = () => {
-    editingPositionId.value = null;
+const saveEditPosition = async () => {
+    // Prevent double submission
+    if (isSubmittingPosition.value) {
+        return;
+    }
+    
+    const position = positions.value.find(p => p.id === editingPositionId.value);
+    if (!position) {
+        editingPositionId.value = null;
+        return;
+    }
+    
+    if (!position.name.trim()) {
+        toast.error('Position name is required!');
+        return;
+    }
+    
+    // Get department_id from position (should be set when editing)
+    const departmentId = position.department_id || null;
+    
+    if (!departmentId) {
+        toast.error('Department is required!');
+        return;
+    }
+    
+    // Prepare data matching Position model structure
+    const positionPayload = {
+        department_id: departmentId,
+        name: position.name.trim(),
+    }
+    
+    isSubmittingPosition.value = true;
+    try {
+        const response = await api.put(`/positions/${editingPositionId.value}`, positionPayload);
+        
+        // Update local state with response data
+        const index = positions.value.findIndex(p => p.id === editingPositionId.value);
+        if (index !== -1) {
+            positions.value[index] = response.data.position;
+        }
+        
+        toast.success('Position updated successfully');
+        editingPositionId.value = null;
+    } catch (error: any) {
+        if (error.response?.status === 422) {
+            // Validation errors
+            const errors = error.response.data.errors;
+            const errorMessages = Object.values(errors).flat().join(', ');
+            toast.error(errorMessages || 'Validation failed');
+        } else {
+            toast.error(error.response?.data?.message || 'Failed to update position');
+        }
+    } finally {
+        isSubmittingPosition.value = false;
+    }
 };
 
 // Function to cancel editing position
@@ -744,24 +1205,49 @@ const deleteEmployee = (employeeId: number) => {
     openDeleteDialog('employee', employeeId);
 };
 
-// Dummy data for positions
-const positions = ref([
-    { id: 1, name: 'Senior Developer', department: 'Engineering' },
-    { id: 2, name: 'Marketing Manager', department: 'Marketing' },
-    { id: 3, name: 'HR Specialist', department: 'HR' },
-    { id: 4, name: 'Sales Executive', department: 'Sales' },
-    { id: 5, name: 'Accountant', department: 'Finance' },
-    { id: 6, name: 'Frontend Developer', department: 'Engineering' },
-    { id: 7, name: 'Backend Developer', department: 'Engineering' },
-    { id: 8, name: 'UI Designer', department: 'Design' },
-]);
+// Positions from backend (already formatted correctly)
+const positions = ref(props.positions);
+
+// Helper function to format role for display
+const formatRole = (role: string): string => {
+    if (role === 'admin') return 'Admin';
+    if (role === 'department_manager') return 'Department Manager';
+    if (role === 'employee') return 'Employee';
+    return role;
+};
+
+const roleBadgeClasses: Record<string, string> = {
+    admin: 'bg-purple-500/15 text-purple-200 border-purple-500/40',
+    'department manager': 'bg-blue-500/15 text-blue-300 border-blue-500/40',
+    employee: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40',
+};
+
+const getRoleBadgeClass = (role: string): string => {
+    const normalized = role.toLowerCase();
+    return roleBadgeClasses[normalized] ?? 'bg-slate-500/15 text-slate-300 border-slate-500/40';
+};
+
+// Computed property for current user's formatted role
+const currentUserRoleDisplay = computed(() => formatRole(currentUser.value.role));
+
+// Computed properties for role-based permissions
+const canViewAllEmployees = computed(() => currentUser.value.role === 'admin');
+const canAddEmployee = computed(() => currentUser.value.role !== 'employee');
+const canEditEmployee = computed(() => currentUser.value.role !== 'employee');
+const canDeleteEmployee = computed(() => currentUser.value.role !== 'employee');
+const canAddPosition = computed(() => currentUser.value.role !== 'employee');
+const canEditPosition = computed(() => currentUser.value.role !== 'employee');
+const canDeletePosition = computed(() => currentUser.value.role !== 'employee');
+const canAddDepartment = computed(() => currentUser.value.role === 'admin');
+const canEditDepartment = computed(() => currentUser.value.role === 'admin');
+const canDeleteDepartment = computed(() => currentUser.value.role === 'admin');
 
 // Filtered positions based on selected department in add employee form
 const filteredPositionsForEmployee = computed(() => {
-    if (!newEmployee.value.department) {
+    if (!newEmployee.value.department_id) {
         return [];
     }
-    return positions.value.filter(pos => pos.department === newEmployee.value.department);
+    return positions.value.filter(pos => pos.department_id === newEmployee.value.department_id);
 });
 
 // Filtered positions for current user's department
@@ -774,10 +1260,10 @@ const filteredPositionsForCurrentUser = computed(() => {
 
 // Filtered positions for selected employee's department
 const filteredPositionsForSelectedEmployee = computed(() => {
-    if (!selectedEmployee.value?.department) {
+    if (!selectedEmployee.value?.department_id) {
         return [];
     }
-    return positions.value.filter(pos => pos.department === selectedEmployee.value.department);
+    return positions.value.filter(pos => pos.department_id === selectedEmployee.value.department_id);
 });
 
 // Filtered positions for All Employees tab Position dialog
@@ -785,7 +1271,12 @@ const filteredPositionsByDepartment = computed(() => {
     if (positionDepartmentFilter.value === 'all') {
         return positions.value;
     }
-    return positions.value.filter(pos => pos.department === positionDepartmentFilter.value);
+    // Find department ID if filter is by name
+    const department = departments.value.find(d => d.name === positionDepartmentFilter.value);
+    if (department) {
+        return positions.value.filter(pos => pos.department_id === department.id);
+    }
+    return positions.value;
 });
 </script>
 
@@ -795,14 +1286,14 @@ const filteredPositionsByDepartment = computed(() => {
     <AppLayout :breadcrumbs="breadcrumbs">
         <div class="relative min-h-[100vh] p-6 flex-1 border border-sidebar-border/70 md:min-h-min dark:border-sidebar-border">
             <Tabs default-value="departments" class="w-full">
-                <TabsList class="grid w-full grid-cols-2 mb-6">
+                <TabsList :class="canViewAllEmployees ? 'grid w-full grid-cols-2 mb-6' : 'grid w-full grid-cols-1 mb-6'">
                     <TabsTrigger value="departments">
                         <div class="flex items-center gap-2">
                             <Building2 :size="16" />
                             <span>My Department</span>
                         </div>
                     </TabsTrigger>
-                    <TabsTrigger value="employees">
+                    <TabsTrigger v-if="canViewAllEmployees" value="employees">
                         <div class="flex items-center gap-2">
                             <Users :size="16" />
                             <span>All Employees</span>
@@ -816,7 +1307,7 @@ const filteredPositionsByDepartment = computed(() => {
                     <Card class="mb-6 border-2 shadow-lg">
                         <CardContent class="px-8 py-2 relative">
                             <!-- Edit Button - Top Right aligned with name -->
-                            <div class="absolute top-2 right-8">
+                            <div v-if="canEditEmployee" class="absolute top-2 right-8">
                                 <Button 
                                     variant="ghost" 
                                     size="icon" 
@@ -880,8 +1371,12 @@ const filteredPositionsByDepartment = computed(() => {
                                                 </div>
                                                 <div>
                                                     <p class="text-xs text-muted-foreground mb-0.5">Role</p>
-                                                    <Badge variant="outline" class="gap-1.5 mt-0.5">
-                                                        {{ currentUser.role }}
+                                                    <Badge 
+                                                        variant="outline" 
+                                                        class="gap-1.5 mt-0.5"
+                                                        :class="getRoleBadgeClass(currentUserRoleDisplay)"
+                                                    >
+                                                        {{ currentUserRoleDisplay }}
                                                     </Badge>
                                                 </div>
                                             </div>
@@ -1013,7 +1508,7 @@ const filteredPositionsByDepartment = computed(() => {
                                 </DialogHeader>
                                 
                                 <!-- Add Position Form -->
-                                <div v-if="isAddingPosition" class="p-3 rounded-lg border border-primary/50 bg-muted/30 mb-4">
+                                <div v-if="isAddingPosition && canAddPosition" class="p-3 rounded-lg border border-primary/50 bg-muted/30 mb-4">
                                     <div class="space-y-3">
                                         <Input 
                                             v-model="newPositionName"
@@ -1024,15 +1519,16 @@ const filteredPositionsByDepartment = computed(() => {
                                                 <SelectValue :placeholder="currentUser.department" />
                                             </SelectTrigger>
                                             <SelectContent>
-                                                <SelectItem :value="currentUser.department">
+                                                <SelectItem :value="departments.find((d: { id: number; name: string }) => d.name === currentUser.department)?.id || ''">
                                                     {{ currentUser.department }}
                                                 </SelectItem>
                                             </SelectContent>
                                         </Select>
                                         <div class="flex gap-2">
-                                            <Button size="sm" @click="addNewPosition" class="flex-1 gap-2">
-                                                <Plus :size="14" />
-                                                Add
+                                            <Button size="sm" @click="addNewPosition" :disabled="isSubmittingPosition" class="flex-1 gap-2">
+                                                <Loader2 v-if="isSubmittingPosition" :size="14" class="animate-spin" />
+                                                <Plus v-else :size="14" />
+                                                {{ isSubmittingPosition ? 'Adding...' : 'Add' }}
                                             </Button>
                                             <Button size="sm" variant="outline" @click="cancelAddPosition">
                                                 Cancel
@@ -1051,20 +1547,21 @@ const filteredPositionsByDepartment = computed(() => {
                                             <template v-if="editingPositionId === position.id">
                                                 <div class="flex-1 space-y-2">
                                                     <Input v-model="position.name" placeholder="Position name" />
-                                                    <Select v-model="position.department" :disabled="true">
+                                                    <Select :model-value="position.department_id" :disabled="true">
                                                         <SelectTrigger class="text-xs">
                                                             <SelectValue :placeholder="currentUser.department" />
                                                         </SelectTrigger>
                                                         <SelectContent>
-                                                            <SelectItem :value="currentUser.department">
+                                                            <SelectItem :value="departments.find((d: { id: number; name: string }) => d.name === currentUser.department)?.id || ''">
                                                                 {{ currentUser.department }}
                                                             </SelectItem>
                                                         </SelectContent>
                                                     </Select>
                                                 </div>
                                                 <div class="flex items-center gap-2">
-                                                    <Button variant="ghost" size="icon" class="h-8 w-8" @click="saveEditPosition">
-                                                        <Check :size="14" />
+                                                    <Button variant="ghost" size="icon" class="h-8 w-8" @click="saveEditPosition" :disabled="isSubmittingPosition">
+                                                        <Loader2 v-if="isSubmittingPosition" :size="14" class="animate-spin" />
+                                                        <Check v-else :size="14" />
                                                     </Button>
                                                     <Button variant="ghost" size="icon" class="h-8 w-8" @click="cancelEditPosition">
                                                         <X :size="14" />
@@ -1076,11 +1573,11 @@ const filteredPositionsByDepartment = computed(() => {
                                                     <p class="font-medium truncate">{{ position.name }}</p>
                                                     <p class="text-xs text-muted-foreground">{{ position.department }}</p>
                                                 </div>
-                                                <div class="flex items-center gap-2">
-                                                    <Button variant="ghost" size="icon" class="h-8 w-8" @click="startEditPosition(position)">
+                                                <div v-if="canEditPosition || canDeletePosition" class="flex items-center gap-2">
+                                                    <Button v-if="canEditPosition" variant="ghost" size="icon" class="h-8 w-8" @click="startEditPosition(position)">
                                                         <Edit :size="14" />
                                                     </Button>
-                                                    <Button variant="ghost" size="icon" class="h-8 w-8 text-destructive hover:text-destructive" @click="deletePosition(position.id)">
+                                                    <Button v-if="canDeletePosition" variant="ghost" size="icon" class="h-8 w-8 text-destructive hover:text-destructive" @click="deletePosition(position.id)">
                                                         <Trash2 :size="14" />
                                                     </Button>
                                                 </div>
@@ -1090,7 +1587,7 @@ const filteredPositionsByDepartment = computed(() => {
                                 </ScrollArea>
 
                                 <div class="border-t pt-4 flex items-center justify-between">
-                                    <Button variant="link" class="gap-2 text-primary" @click="() => { newPositionDepartment = currentUser.department; isAddingPosition = true; }">
+                                    <Button v-if="canAddPosition" variant="link" class="gap-2 text-primary" @click="() => { const dept = departments.find((d: { id: number; name: string }) => d.name === currentUser.department); newPositionDepartment = dept?.id || ''; isAddingPosition = true; }">
                                         <Plus :size="16" />
                                         Add Position
                                     </Button>
@@ -1100,7 +1597,7 @@ const filteredPositionsByDepartment = computed(() => {
                                 </div>
                             </DialogContent>
                         </Dialog>
-                        <Button variant="outline" class="gap-2 flex-1 sm:flex-none" @click="openAddEmployeeDialog(true)">
+                        <Button v-if="canAddEmployee" variant="outline" class="gap-2 flex-1 sm:flex-none" @click="openAddEmployeeDialog(true)">
                             <Plus :size="16" />
                             <span>Add</span>
                         </Button>
@@ -1135,7 +1632,12 @@ const filteredPositionsByDepartment = computed(() => {
                                             </td>
                                             <td class="p-4 align-middle text-sm">{{ employee.position }}</td>
                                             <td class="p-4 align-middle">
-                                                <Badge variant="outline">{{ employee.role }}</Badge>
+                                                <Badge 
+                                                    variant="outline"
+                                                    :class="getRoleBadgeClass(employee.role)"
+                                                >
+                                                    {{ employee.role }}
+                                                </Badge>
                                             </td>
                                             <td class="p-4 align-middle font-mono text-xs">{{ employee.employeeCode }}</td>
                                             <td class="p-4 align-middle text-sm text-muted-foreground">{{ employee.email }}</td>
@@ -1151,7 +1653,7 @@ const filteredPositionsByDepartment = computed(() => {
                                                             <Eye :size="16" />
                                                             View Details
                                                         </DropdownMenuItem>
-                                                        <DropdownMenuItem class="gap-2 text-destructive focus:text-destructive" @click="deleteEmployee(employee.id)">
+                                                        <DropdownMenuItem v-if="canDeleteEmployee" class="gap-2 text-destructive focus:text-destructive" @click="deleteEmployee(employee.id)">
                                                             <Trash2 :size="16" />
                                                             Delete
                                                         </DropdownMenuItem>
@@ -1188,7 +1690,7 @@ const filteredPositionsByDepartment = computed(() => {
                                                         <Eye :size="16" />
                                                         View Details
                                                     </DropdownMenuItem>
-                                                    <DropdownMenuItem class="gap-2 text-destructive focus:text-destructive" @click="deleteEmployee(employee.id)">
+                                                    <DropdownMenuItem v-if="canDeleteEmployee" class="gap-2 text-destructive focus:text-destructive" @click="deleteEmployee(employee.id)">
                                                         <Trash2 :size="16" />
                                                         Delete
                                                     </DropdownMenuItem>
@@ -1203,7 +1705,13 @@ const filteredPositionsByDepartment = computed(() => {
                                         </div>
                                         <div class="flex gap-2">
                                             <span class="text-muted-foreground w-24">Role:</span>
-                                            <Badge variant="outline" class="text-xs">{{ employee.role }}</Badge>
+                                            <Badge 
+                                                variant="outline" 
+                                                class="text-xs"
+                                                :class="getRoleBadgeClass(employee.role)"
+                                            >
+                                                {{ employee.role }}
+                                            </Badge>
                                         </div>
                                         <div class="flex gap-2">
                                             <span class="text-muted-foreground w-24">Email:</span>
@@ -1346,7 +1854,7 @@ const filteredPositionsByDepartment = computed(() => {
                                         </div>
                                         
                                         <!-- Add Position Form -->
-                                        <div v-if="isAddingPosition" class="p-3 rounded-lg border border-primary/50 bg-muted/30 mb-4">
+                                        <div v-if="isAddingPosition && canAddPosition" class="p-3 rounded-lg border border-primary/50 bg-muted/30 mb-4">
                                             <div class="space-y-3">
                                                 <Input 
                                                     v-model="newPositionName"
@@ -1357,14 +1865,15 @@ const filteredPositionsByDepartment = computed(() => {
                                                         <SelectValue placeholder="Select department" />
                                                     </SelectTrigger>
                                                     <SelectContent>
-                                                        <SelectItem v-for="dept in uniqueDepartments" :key="dept" :value="dept">
-                                                            {{ dept }}
+                                                        <SelectItem v-for="dept in departments" :key="dept.id" :value="dept.id">
+                                                            {{ dept.name }}
                                                         </SelectItem>
                                                     </SelectContent>
                                                 </Select>
                                                 <div class="flex gap-2">
-                                                    <Button size="sm" @click="addNewPosition" class="flex-1">
-                                                        Add
+                                                    <Button size="sm" @click="addNewPosition" :disabled="isSubmittingPosition" class="flex-1 gap-2">
+                                                        <Loader2 v-if="isSubmittingPosition" :size="14" class="animate-spin" />
+                                                        {{ isSubmittingPosition ? 'Adding...' : 'Add' }}
                                                     </Button>
                                                     <Button size="sm" variant="outline" @click="cancelAddPosition">
                                                         Cancel
@@ -1383,20 +1892,21 @@ const filteredPositionsByDepartment = computed(() => {
                                                     <template v-if="editingPositionId === position.id">
                                                         <div class="flex-1 space-y-2">
                                                             <Input v-model="position.name" placeholder="Position name" />
-                                                            <Select v-model="position.department">
+                                                            <Select v-model="position.department_id">
                                                                 <SelectTrigger class="text-xs">
                                                                     <SelectValue placeholder="Select department" />
                                                                 </SelectTrigger>
                                                                 <SelectContent>
-                                                                    <SelectItem v-for="dept in uniqueDepartments" :key="dept" :value="dept">
-                                                                        {{ dept }}
+                                                                    <SelectItem v-for="dept in departments" :key="dept.id" :value="dept.id">
+                                                                        {{ dept.name }}
                                                                     </SelectItem>
                                                                 </SelectContent>
                                                             </Select>
                                                         </div>
                                                         <div class="flex items-center gap-2">
-                                                            <Button variant="ghost" size="icon" class="h-8 w-8" @click="saveEditPosition">
-                                                                <Check :size="14" />
+                                                            <Button variant="ghost" size="icon" class="h-8 w-8" @click="saveEditPosition" :disabled="isSubmittingPosition">
+                                                                <Loader2 v-if="isSubmittingPosition" :size="14" class="animate-spin" />
+                                                                <Check v-else :size="14" />
                                                             </Button>
                                                             <Button variant="ghost" size="icon" class="h-8 w-8" @click="cancelEditPosition">
                                                                 <X :size="14" />
@@ -1408,11 +1918,11 @@ const filteredPositionsByDepartment = computed(() => {
                                                             <p class="font-medium truncate">{{ position.name }}</p>
                                                             <p class="text-xs text-muted-foreground">{{ position.department }}</p>
                                                         </div>
-                                                        <div class="flex items-center gap-2">
-                                                            <Button variant="ghost" size="icon" class="h-8 w-8" @click="startEditPosition(position)">
+                                                        <div v-if="canEditPosition || canDeletePosition" class="flex items-center gap-2">
+                                                            <Button v-if="canEditPosition" variant="ghost" size="icon" class="h-8 w-8" @click="startEditPosition(position)">
                                                                 <Edit :size="14" />
                                                             </Button>
-                                                            <Button variant="ghost" size="icon" class="h-8 w-8 text-destructive hover:text-destructive" @click="deletePosition(position.id)">
+                                                            <Button v-if="canDeletePosition" variant="ghost" size="icon" class="h-8 w-8 text-destructive hover:text-destructive" @click="deletePosition(position.id)">
                                                                 <Trash2 :size="14" />
                                                             </Button>
                                                         </div>
@@ -1422,7 +1932,7 @@ const filteredPositionsByDepartment = computed(() => {
                                         </ScrollArea>
 
                                         <div class="border-t pt-4 flex items-center justify-between">
-                                            <Button variant="link" class="gap-2 text-primary" @click="isAddingPosition = true">
+                                            <Button v-if="canAddPosition" variant="link" class="gap-2 text-primary" @click="isAddingPosition = true">
                                                 <Plus :size="16" />
                                                 Add Position
                                             </Button>
@@ -1433,7 +1943,7 @@ const filteredPositionsByDepartment = computed(() => {
                                     </DialogContent>
                                     </Dialog>
                                     <Dialog v-model:open="isDepartmentDialogOpen">
-                                        <DialogTrigger as-child>
+                                        <DialogTrigger v-if="canAddDepartment" as-child>
                                             <Button variant="outline" class="gap-2 flex-1 sm:flex-none sm:min-w-[120px]">
                                                 <span class="hidden sm:inline">Department</span>
                                                 <span class="sm:hidden">Dept</span>
@@ -1445,7 +1955,7 @@ const filteredPositionsByDepartment = computed(() => {
                                         </DialogHeader>
                                         
                                         <!-- Add Department Form -->
-                                        <div v-if="isAddingDepartment" class="p-3 rounded-lg border border-primary/50 bg-muted/30 mb-4">
+                                        <div v-if="isAddingDepartment && canAddDepartment" class="p-3 rounded-lg border border-primary/50 bg-muted/30 mb-4">
                                             <div class="space-y-3">
                                                 <Input 
                                                     v-model="newDepartmentCode"
@@ -1456,9 +1966,10 @@ const filteredPositionsByDepartment = computed(() => {
                                                     placeholder="Department name"
                                                 />
                                                 <div class="flex gap-2">
-                                                    <Button size="sm" @click="addNewDepartment" class="flex-1 gap-2">
-                                                        <Plus :size="14" />
-                                                        Add
+                                                    <Button size="sm" @click="addNewDepartment" :disabled="isSubmittingDepartment" class="flex-1 gap-2">
+                                                        <Loader2 v-if="isSubmittingDepartment" :size="14" class="animate-spin" />
+                                                        <Plus v-else :size="14" />
+                                                        {{ isSubmittingDepartment ? 'Adding...' : 'Add' }}
                                                     </Button>
                                                     <Button size="sm" variant="outline" @click="cancelAddDepartment">
                                                         Cancel
@@ -1480,8 +1991,9 @@ const filteredPositionsByDepartment = computed(() => {
                                                             <Input v-model="department.name" placeholder="Department name" />
                                                         </div>
                                                         <div class="flex items-center gap-2">
-                                                            <Button variant="ghost" size="icon" class="h-8 w-8" @click="saveEditDepartment">
-                                                                <Check :size="14" />
+                                                            <Button variant="ghost" size="icon" class="h-8 w-8" @click="saveEditDepartment" :disabled="isSubmittingDepartment">
+                                                                <Loader2 v-if="isSubmittingDepartment" :size="14" class="animate-spin" />
+                                                                <Check v-else :size="14" />
                                                             </Button>
                                                             <Button variant="ghost" size="icon" class="h-8 w-8" @click="cancelEditDepartment">
                                                                 <X :size="14" />
@@ -1492,13 +2004,12 @@ const filteredPositionsByDepartment = computed(() => {
                                                         <div class="flex-1 min-w-0">
                                                             <p class="font-medium truncate">{{ department.name }}</p>
                                                             <p class="text-xs text-muted-foreground font-mono">{{ department.code }}</p>
-                                                            <Badge variant="outline" class="mt-1 text-xs">{{ department.employeeCount }} employees</Badge>
                                                         </div>
-                                                        <div class="flex items-center gap-2">
-                                                            <Button variant="ghost" size="icon" class="h-8 w-8" @click="startEditDepartment(department)">
+                                                        <div v-if="canEditDepartment || canDeleteDepartment" class="flex items-center gap-2">
+                                                            <Button v-if="canEditDepartment" variant="ghost" size="icon" class="h-8 w-8" @click="startEditDepartment(department)">
                                                                 <Edit :size="14" />
                                                             </Button>
-                                                            <Button variant="ghost" size="icon" class="h-8 w-8 text-destructive hover:text-destructive" @click="deleteDepartment(department.id)">
+                                                            <Button v-if="canDeleteDepartment" variant="ghost" size="icon" class="h-8 w-8 text-destructive hover:text-destructive" @click="deleteDepartment(department.id)">
                                                                 <Trash2 :size="14" />
                                                             </Button>
                                                         </div>
@@ -1508,7 +2019,7 @@ const filteredPositionsByDepartment = computed(() => {
                                         </ScrollArea>
 
                                         <div class="border-t pt-4 flex items-center justify-between">
-                                            <Button variant="link" class="gap-2 text-primary" @click="isAddingDepartment = true">
+                                            <Button v-if="canAddDepartment" variant="link" class="gap-2 text-primary" @click="isAddingDepartment = true">
                                                 <Plus :size="16" />
                                                 Add Department
                                             </Button>
@@ -1518,7 +2029,7 @@ const filteredPositionsByDepartment = computed(() => {
                                         </div>
                                     </DialogContent>
                                     </Dialog>
-                                    <Button variant="outline" class="gap-2 flex-1 sm:flex-none" @click="openAddEmployeeDialog(false)">
+                                    <Button v-if="canAddEmployee" variant="outline" class="gap-2 flex-1 sm:flex-none" @click="openAddEmployeeDialog(false)">
                                         <Plus :size="16" />
                                         <span>Add</span>
                                     </Button>
@@ -1546,7 +2057,12 @@ const filteredPositionsByDepartment = computed(() => {
                                             </td>
                                             <td class="p-4 align-middle text-sm">{{ employee.position }}</td>
                                             <td class="p-4 align-middle">
-                                                <Badge variant="outline">{{ employee.role }}</Badge>
+                                                <Badge 
+                                                    variant="outline"
+                                                    :class="getRoleBadgeClass(employee.role)"
+                                                >
+                                                    {{ employee.role }}
+                                                </Badge>
                                             </td>
                                             <td class="p-4 align-middle font-mono text-xs">{{ employee.employeeCode }}</td>
                                             <td class="p-4 align-middle text-sm text-muted-foreground">{{ employee.email }}</td>
@@ -1562,7 +2078,7 @@ const filteredPositionsByDepartment = computed(() => {
                                                             <Eye :size="16" />
                                                             View Details
                                                         </DropdownMenuItem>
-                                                        <DropdownMenuItem class="gap-2 text-destructive focus:text-destructive" @click="deleteEmployee(employee.id)">
+                                                        <DropdownMenuItem v-if="canDeleteEmployee" class="gap-2 text-destructive focus:text-destructive" @click="deleteEmployee(employee.id)">
                                                             <Trash2 :size="16" />
                                                             Delete
                                                         </DropdownMenuItem>
@@ -1599,7 +2115,7 @@ const filteredPositionsByDepartment = computed(() => {
                                                         <Eye :size="16" />
                                                         View Details
                                                     </DropdownMenuItem>
-                                                    <DropdownMenuItem class="gap-2 text-destructive focus:text-destructive" @click="deleteEmployee(employee.id)">
+                                                    <DropdownMenuItem v-if="canDeleteEmployee" class="gap-2 text-destructive focus:text-destructive" @click="deleteEmployee(employee.id)">
                                                         <Trash2 :size="16" />
                                                         Delete
                                                     </DropdownMenuItem>
@@ -1614,7 +2130,13 @@ const filteredPositionsByDepartment = computed(() => {
                                         </div>
                                         <div class="flex gap-2">
                                             <span class="text-muted-foreground w-24">Role:</span>
-                                            <Badge variant="outline" class="text-xs">{{ employee.role }}</Badge>
+                                            <Badge 
+                                                variant="outline" 
+                                                class="text-xs"
+                                                :class="getRoleBadgeClass(employee.role)"
+                                            >
+                                                {{ employee.role }}
+                                            </Badge>
                                         </div>
                                         <div class="flex gap-2">
                                             <span class="text-muted-foreground w-24">Email:</span>
@@ -1665,7 +2187,7 @@ const filteredPositionsByDepartment = computed(() => {
                                         <div class="w-24 h-24 rounded-full bg-gradient-to-br from-primary/80 to-primary flex items-center justify-center overflow-hidden border-2 border-border">
                                             <img v-if="newEmployee.avatar" :src="newEmployee.avatar" alt="Avatar" class="w-full h-full object-cover" />
                                             <span v-else class="text-3xl font-bold text-white">
-                                                {{ newEmployee.firstName && newEmployee.lastName ? (newEmployee.firstName[0] + newEmployee.lastName[0]) : '?' }}
+                                                {{ newEmployee.first_name && newEmployee.last_name ? (newEmployee.first_name[0] + newEmployee.last_name[0]) : '?' }}
                                             </span>
                                         </div>
                                         <label for="new-employee-avatar" class="absolute -bottom-1 -right-1 w-8 h-8 bg-white dark:bg-gray-800 border-2 border-primary rounded-full flex items-center justify-center cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors shadow-lg">
@@ -1678,29 +2200,29 @@ const filteredPositionsByDepartment = computed(() => {
                                 <div class="grid grid-cols-2 gap-4">
                                     <div class="space-y-2">
                                         <Label class="text-sm font-medium">First Name *</Label>
-                                        <Input v-model="newEmployee.firstName" placeholder="First name" />
+                                        <Input v-model="newEmployee.first_name" placeholder="First name" />
                                     </div>
                                     <div class="space-y-2">
                                         <Label class="text-sm font-medium">Last Name *</Label>
-                                        <Input v-model="newEmployee.lastName" placeholder="Last name" />
+                                        <Input v-model="newEmployee.last_name" placeholder="Last name" />
                                     </div>
                                 </div>
 
                                 <div class="space-y-2">
                                     <Label class="text-sm font-medium">Employee Code *</Label>
-                                    <Input v-model="newEmployee.employeeCode" placeholder="e.g., EMP016" class="font-mono" />
+                                    <Input v-model="newEmployee.employee_code" placeholder="e.g., EMP016" class="font-mono" />
                                 </div>
 
                                 <div class="grid grid-cols-2 gap-4">
                                     <div class="space-y-2">
                                         <Label class="text-sm font-medium">Department *</Label>
-                                        <Select v-model="newEmployee.department" :disabled="isAddingFromDepartmentsTab" @update:model-value="newEmployee.position = ''">
+                                        <Select v-model="newEmployee.department_id" :disabled="isAddingFromDepartmentsTab" @update:model-value="newEmployee.position_id = null">
                                             <SelectTrigger>
                                                 <SelectValue placeholder="Select department" />
                                             </SelectTrigger>
                                             <SelectContent>
-                                                <SelectItem v-for="dept in uniqueDepartments" :key="dept" :value="dept">
-                                                    {{ dept }}
+                                                <SelectItem v-for="dept in departments" :key="dept.id" :value="dept.id">
+                                                    {{ dept.name }}
                                                 </SelectItem>
                                             </SelectContent>
                                         </Select>
@@ -1708,12 +2230,12 @@ const filteredPositionsByDepartment = computed(() => {
 
                                     <div class="space-y-2">
                                         <Label class="text-sm font-medium">Position</Label>
-                                        <Select v-model="newEmployee.position" :disabled="!newEmployee.department">
+                                        <Select v-model="newEmployee.position_id" :disabled="!newEmployee.department_id">
                                             <SelectTrigger>
-                                                <SelectValue :placeholder="newEmployee.department ? 'Select position' : 'Select department first'" />
+                                                <SelectValue :placeholder="newEmployee.department_id ? 'Select position' : 'Select department first'" />
                                             </SelectTrigger>
                                             <SelectContent>
-                                                <SelectItem v-for="pos in filteredPositionsForEmployee" :key="pos.id" :value="pos.name">
+                                                <SelectItem v-for="pos in filteredPositionsForEmployee" :key="pos.id" :value="pos.id">
                                                     {{ pos.name }}
                                                 </SelectItem>
                                             </SelectContent>
@@ -1723,12 +2245,12 @@ const filteredPositionsByDepartment = computed(() => {
 
                                 <div class="space-y-2">
                                     <Label class="text-sm font-medium">Contact Number</Label>
-                                    <Input v-model="newEmployee.contactNum" placeholder="+63 917 123 4567" />
+                                    <Input v-model="newEmployee.contact_number" placeholder="+63 917 123 4567" />
                                 </div>
 
                                 <div class="space-y-2">
                                     <Label class="text-sm font-medium">Birthday</Label>
-                                    <Input v-model="newEmployee.birthday" type="date" />
+                                    <Input v-model="newEmployee.birth_date" type="date" />
                                 </div>
 
                                 <div class="flex justify-end gap-2 pt-4 border-t">
@@ -1766,9 +2288,10 @@ const filteredPositionsByDepartment = computed(() => {
                                         <Button variant="outline" @click="isAddEmployeeDialogOpen = false">
                                             Cancel
                                         </Button>
-                                        <Button @click="addNewEmployee" class="gap-2">
-                                            <Plus :size="16" />
-                                            Add Employee
+                                        <Button @click="addNewEmployee" :disabled="isSubmittingEmployee" class="gap-2">
+                                            <Loader2 v-if="isSubmittingEmployee" :size="16" class="animate-spin" />
+                                            <Plus v-else :size="16" />
+                                            {{ isSubmittingEmployee ? 'Adding Employee...' : 'Add Employee' }}
                                         </Button>
                                     </div>
                                 </div>
@@ -1806,11 +2329,11 @@ const filteredPositionsByDepartment = computed(() => {
                             <div class="grid grid-cols-2 gap-3">
                                 <div class="space-y-1.5">
                                     <Label class="text-xs font-medium">First Name</Label>
-                                    <Input v-model="selectedEmployee.firstName" placeholder="First Name" class="h-9 text-sm" />
+                                    <Input v-model="selectedEmployee.first_name" placeholder="First Name" class="h-9 text-sm" />
                                 </div>
                                 <div class="space-y-1.5">
                                     <Label class="text-xs font-medium">Last Name</Label>
-                                    <Input v-model="selectedEmployee.lastName" placeholder="Last Name" class="h-9 text-sm" />
+                                    <Input v-model="selectedEmployee.last_name" placeholder="Last Name" class="h-9 text-sm" />
                                 </div>
                             </div>
 
@@ -1819,14 +2342,14 @@ const filteredPositionsByDepartment = computed(() => {
                                 <Label class="text-xs font-medium">Department</Label>
                                 <Select 
                                     v-if="isFromAllEmployeesTab" 
-                                    v-model="selectedEmployee.department"
+                                    v-model="selectedEmployee.department_id"
                                 >
                                     <SelectTrigger class="h-9 text-sm">
                                         <SelectValue placeholder="Select department" />
                                     </SelectTrigger>
                                     <SelectContent>
-                                        <SelectItem v-for="dept in uniqueDepartments" :key="dept" :value="dept">
-                                            {{ dept }}
+                                        <SelectItem v-for="dept in departments" :key="dept.id" :value="dept.id">
+                                            {{ dept.name }}
                                         </SelectItem>
                                     </SelectContent>
                                 </Select>
@@ -1839,7 +2362,7 @@ const filteredPositionsByDepartment = computed(() => {
                             <!-- Position -->
                             <div class="space-y-1.5">
                                 <Label class="text-xs font-medium">Position</Label>
-                                <Select v-model="selectedEmployee.position">
+                                <Select v-model="selectedEmployee.position_id">
                                     <SelectTrigger class="h-9 text-sm">
                                         <SelectValue placeholder="Select position" />
                                     </SelectTrigger>
@@ -1847,7 +2370,7 @@ const filteredPositionsByDepartment = computed(() => {
                                         <SelectItem 
                                             v-for="position in filteredPositionsForSelectedEmployee" 
                                             :key="position.id" 
-                                            :value="position.name"
+                                            :value="position.id"
                                         >
                                             {{ position.name }}
                                         </SelectItem>
@@ -1863,9 +2386,9 @@ const filteredPositionsByDepartment = computed(() => {
                                         <SelectValue placeholder="Select role" />
                                     </SelectTrigger>
                                     <SelectContent>
-                                        <SelectItem value="Admin">Admin</SelectItem>
-                                        <SelectItem value="Department Manager">Department Manager</SelectItem>
-                                        <SelectItem value="Employee">Employee</SelectItem>
+                                        <SelectItem value="admin">Admin</SelectItem>
+                                        <SelectItem value="department_manager">Department Manager</SelectItem>
+                                        <SelectItem value="employee">Employee</SelectItem>
                                     </SelectContent>
                                 </Select>
                             </div>
@@ -1873,7 +2396,7 @@ const filteredPositionsByDepartment = computed(() => {
                             <!-- Employee Code -->
                             <div class="space-y-1.5">
                                 <Label class="text-xs font-medium">Employee Code</Label>
-                                <Input v-model="selectedEmployee.employeeCode" placeholder="Employee Code" class="font-mono h-9 text-sm" />
+                                <Input v-model="selectedEmployee.employee_code" placeholder="Employee Code" class="font-mono h-9 text-sm" />
                             </div>
 
                             <!-- Email -->
@@ -1885,13 +2408,13 @@ const filteredPositionsByDepartment = computed(() => {
                             <!-- Contact Number -->
                             <div class="space-y-1.5">
                                 <Label class="text-xs font-medium">Contact Number</Label>
-                                <Input v-model="selectedEmployee.contactNum" placeholder="Contact Number" class="h-9 text-sm" />
+                                <Input v-model="selectedEmployee.contact_number" placeholder="Contact Number" class="h-9 text-sm" />
                             </div>
 
                             <!-- Birthday -->
                             <div class="space-y-1.5">
                                 <Label class="text-xs font-medium">Birthday</Label>
-                                <Input v-model="selectedEmployee.birthday" type="date" class="h-9 text-sm" />
+                                <Input v-model="selectedEmployee.birth_date" type="date" class="h-9 text-sm" />
                             </div>
                         </div>
 
@@ -1938,16 +2461,19 @@ const filteredPositionsByDepartment = computed(() => {
                                     </div>
                                 </div>
 
-                                <!-- Role (All Employees Tab only) -->
-                                <div v-if="isFromAllEmployeesTab" class="flex items-center gap-3">
+                                <!-- Role -->
+                                <div class="flex items-center gap-3">
                                     <div class="w-10 h-10 rounded-lg bg-muted flex items-center justify-center shrink-0">
                                         <Shield :size="18" class="text-muted-foreground" />
                                     </div>
                                     <div class="flex-1 min-w-0">
                                         <p class="text-xs text-muted-foreground mb-0.5">Role</p>
-                                        <Badge variant="outline" class="gap-1.5 text-xs">
-                                            
-                                            {{ selectedEmployee.role }}
+                                        <Badge 
+                                            variant="outline" 
+                                            class="gap-1.5 text-xs"
+                                            :class="getRoleBadgeClass(formatRole(selectedEmployee.role))"
+                                        >
+                                            {{ formatRole(selectedEmployee.role) }}
                                         </Badge>
                                     </div>
                                 </div>
@@ -2011,15 +2537,16 @@ const filteredPositionsByDepartment = computed(() => {
                         <Button variant="outline" @click="isEmployeeDetailsOpen = false" class="h-9 text-sm">
                             Close
                         </Button>
-                        <Button v-if="!isEditMode" @click="toggleEditMode" class="h-9 text-sm">
+                        <Button v-if="!isEditMode && canEditEmployee" @click="toggleEditMode" class="h-9 text-sm">
                             Edit
                         </Button>
-                        <template v-else>
+                        <template v-else-if="canEditEmployee">
                             <Button variant="outline" @click="toggleEditMode" class="h-9 text-sm">
                                 Cancel
                             </Button>
-                            <Button @click="saveEmployeeDetails" class="h-9 text-sm">
-                                Save Changes
+                            <Button @click="saveEmployeeDetails" :disabled="isSubmittingEmployee" class="h-9 text-sm gap-2">
+                                <Loader2 v-if="isSubmittingEmployee" :size="14" class="animate-spin" />
+                                {{ isSubmittingEmployee ? 'Saving...' : 'Save Changes' }}
                             </Button>
                         </template>
                     </DialogFooter>
@@ -2067,7 +2594,7 @@ const filteredPositionsByDepartment = computed(() => {
                                 <div class="w-20 h-20 rounded-full bg-gradient-to-br from-primary/80 to-primary flex items-center justify-center overflow-hidden border-2 border-border">
                                     <img v-if="editedUserInfo.avatar" :src="editedUserInfo.avatar" alt="Avatar" class="w-full h-full object-cover" />
                                     <span v-else class="text-2xl font-bold text-white">
-                                        {{ editedUserInfo.firstName && editedUserInfo.lastName ? (editedUserInfo.firstName[0] + editedUserInfo.lastName[0]) : (currentUser.name.split(' ').map(n => n[0]).join('')) }}
+                                        {{ editedUserInfo.first_name && editedUserInfo.last_name ? (editedUserInfo.first_name[0] + editedUserInfo.last_name[0]) : (currentUser.name.split(' ').map(n => n[0]).join('')) }}
                                     </span>
                                 </div>
                                 <label for="user-info-avatar-upload" class="absolute -bottom-1 -right-1 w-7 h-7 bg-white dark:bg-gray-800 border-2 border-primary rounded-full flex items-center justify-center cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors shadow-lg">
@@ -2081,18 +2608,18 @@ const filteredPositionsByDepartment = computed(() => {
                         <div class="grid grid-cols-2 gap-3">
                             <div class="space-y-1.5">
                                 <Label class="text-xs font-medium">First Name</Label>
-                                <Input v-model="editedUserInfo.firstName" placeholder="First Name" class="h-9 text-sm" />
+                                <Input v-model="editedUserInfo.first_name" placeholder="First Name" class="h-9 text-sm" />
                             </div>
                             <div class="space-y-1.5">
                                 <Label class="text-xs font-medium">Last Name</Label>
-                                <Input v-model="editedUserInfo.lastName" placeholder="Last Name" class="h-9 text-sm" />
+                                <Input v-model="editedUserInfo.last_name" placeholder="Last Name" class="h-9 text-sm" />
                             </div>
                         </div>
 
                         <!-- Position -->
                         <div class="space-y-1.5">
                             <Label class="text-xs font-medium">Position</Label>
-                            <Select v-model="editedUserInfo.position">
+                            <Select v-model="editedUserInfo.position_id">
                                 <SelectTrigger class="h-9 text-sm">
                                     <SelectValue placeholder="Select position" />
                                 </SelectTrigger>
@@ -2100,7 +2627,7 @@ const filteredPositionsByDepartment = computed(() => {
                                     <SelectItem 
                                         v-for="position in filteredPositionsForCurrentUser" 
                                         :key="position.id" 
-                                        :value="position.name"
+                                        :value="position.id"
                                     >
                                         {{ position.name }}
                                     </SelectItem>
@@ -2111,7 +2638,7 @@ const filteredPositionsByDepartment = computed(() => {
                         <!-- Employee Code -->
                         <div class="space-y-1.5">
                             <Label class="text-xs font-medium">Employee Code</Label>
-                            <Input v-model="editedUserInfo.employeeCode" placeholder="Employee Code" class="font-mono h-9 text-sm" />
+                            <Input v-model="editedUserInfo.employee_code" placeholder="Employee Code" class="font-mono h-9 text-sm" />
                         </div>
 
                         <!-- Email -->
@@ -2123,13 +2650,13 @@ const filteredPositionsByDepartment = computed(() => {
                         <!-- Contact Number -->
                         <div class="space-y-1.5">
                             <Label class="text-xs font-medium">Contact Number</Label>
-                            <Input v-model="editedUserInfo.contactNum" placeholder="Contact Number" class="h-9 text-sm" />
+                            <Input v-model="editedUserInfo.contact_number" placeholder="Contact Number" class="h-9 text-sm" />
                         </div>
 
                         <!-- Birthday -->
                         <div class="space-y-1.5">
                             <Label class="text-xs font-medium">Birthday</Label>
-                            <Input v-model="editedUserInfo.birthday" type="date" class="h-9 text-sm" />
+                            <Input v-model="editedUserInfo.birth_date" type="date" class="h-9 text-sm" />
                         </div>
 
                         <!-- Department (Read-only) -->
@@ -2163,7 +2690,10 @@ const filteredPositionsByDepartment = computed(() => {
 
                     <DialogFooter class="gap-2 pt-2">
                         <Button variant="outline" @click="closeUserInfoEdit" class="h-9 text-sm">Cancel</Button>
-                        <Button @click="saveUserInfo" class="h-9 text-sm">Save Changes</Button>
+                        <Button @click="saveUserInfo" :disabled="isSubmittingEmployee" class="h-9 text-sm gap-2">
+                            <Loader2 v-if="isSubmittingEmployee" :size="14" class="animate-spin" />
+                            {{ isSubmittingEmployee ? 'Saving...' : 'Save Changes' }}
+                        </Button>
                     </DialogFooter>
                 </DialogContent>
             </Dialog>

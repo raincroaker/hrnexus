@@ -10,6 +10,8 @@ use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\ServiceProvider;
 use Illuminate\Support\Str;
 use Inertia\Inertia;
+use Laravel\Fortify\Contracts\LoginResponse;
+use Laravel\Fortify\Contracts\LogoutResponse;
 use Laravel\Fortify\Features;
 use Laravel\Fortify\Fortify;
 
@@ -20,7 +22,36 @@ class FortifyServiceProvider extends ServiceProvider
      */
     public function register(): void
     {
-        //
+        // Custom logout response to handle Inertia requests properly
+        $this->app->instance(LogoutResponse::class, new class implements LogoutResponse
+        {
+            public function toResponse($request)
+            {
+                // For Inertia/XHR requests, return a redirect response that Inertia can handle
+                if ($request->wantsJson() || $request->header('X-Inertia')) {
+                    return redirect('/login');
+                }
+
+                // For regular requests, redirect to login
+                return redirect('/login');
+            }
+        });
+
+        // Custom login response - force full page reload to refresh CSRF token
+        $this->app->instance(LoginResponse::class, new class implements LoginResponse
+        {
+            public function toResponse($request)
+            {
+                // For Inertia requests, use Inertia::location() to force a full page reload
+                // This ensures the meta tag gets a fresh CSRF token
+                if ($request->header('X-Inertia')) {
+                    return Inertia::location('/dashboard');
+                }
+
+                // For regular requests, standard redirect
+                return redirect('/dashboard');
+            }
+        });
     }
 
     /**

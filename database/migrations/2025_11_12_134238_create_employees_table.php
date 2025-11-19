@@ -4,7 +4,8 @@ use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 
-return new class extends Migration {
+return new class extends Migration
+{
     public function up(): void
     {
         Schema::create('employees', function (Blueprint $table) {
@@ -18,6 +19,10 @@ return new class extends Migration {
             $table->string('contact_number')->nullable();
             $table->date('birth_date')->nullable();
             $table->string('avatar')->nullable(); // can store path or filename
+
+            // Added role column
+            $table->enum('role', ['employee', 'department_manager', 'admin'])->default('employee');
+
             $table->timestamps();
             $table->softDeletes();
         });
