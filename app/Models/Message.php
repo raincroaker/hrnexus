@@ -21,6 +21,8 @@ class Message extends Model
         'is_pinned',
         'is_deleted',
         'is_edited',
+        'edited_by',
+        'deleted_by',
     ];
 
     protected function casts(): array
@@ -41,6 +43,16 @@ class Message extends Model
     public function user(): BelongsTo
     {
         return $this->belongsTo(User::class);
+    }
+
+    public function editor(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'edited_by');
+    }
+
+    public function deleter(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'deleted_by');
     }
 
     public function attachments(): HasMany

@@ -21,6 +21,8 @@ return new class extends Migration
             $table->boolean('is_pinned')->default(false);
             $table->boolean('is_deleted')->default(false);
             $table->boolean('is_edited')->default(false);
+            $table->foreignId('edited_by')->nullable()->constrained('users')->nullOnDelete();
+            $table->foreignId('deleted_by')->nullable()->constrained('users')->nullOnDelete();
             $table->timestamps();
             $table->softDeletes();
         });
