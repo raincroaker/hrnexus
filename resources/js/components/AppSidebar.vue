@@ -16,36 +16,51 @@ import { Link } from '@inertiajs/vue3';
 import { IdCard, ClipboardCheck, LayoutGrid, MessageSquareText, CalendarDays, FolderClosed } from 'lucide-vue-next';
 import AppLogo from './AppLogo.vue';
 
-const mainNavItems: NavItem[] = [
+interface NavGroup {
+    label: string;
+    items: NavItem[];
+}
+
+const navGroups: NavGroup[] = [
     {
-        title: 'Dashboard',
-        href: dashboard(),
-        icon: LayoutGrid,
+        label: 'Overview',
+        items: [
+            {
+                title: 'Dashboard',
+                href: dashboard(),
+                icon: LayoutGrid,
+            },
+            {
+                title: 'Attendance',
+                href: '/attendance',
+                icon: ClipboardCheck,
+            },
+            {
+                title: 'Calendar',
+                href: '/calendar',
+                icon: CalendarDays,
+            },
+            {
+                title: 'Chats',
+                href: '/chats',
+                icon: MessageSquareText,
+            },
+        ],
     },
     {
-        title: 'Employees',
-        href: '/employees',
-        icon: IdCard,
-    },
-    {
-        title: 'Attendance',
-        href: '/attendance',
-        icon: ClipboardCheck,
-    },
-    {
-        title: 'Chats',
-        href: '/chats',
-        icon: MessageSquareText,
-    },
-    {
-        title: 'Calendar',
-        href: '/calendar',
-        icon: CalendarDays,
-    },
-    {
-        title: 'Documents',
-        href: '/documents',
-        icon: FolderClosed,
+        label: 'Management',
+        items: [
+            {
+                title: 'Employees',
+                href: '/employees',
+                icon: IdCard,
+            },
+            {
+                title: 'Documents',
+                href: '/documents',
+                icon: FolderClosed,
+            },
+        ],
     },
 ];
 
@@ -67,7 +82,7 @@ const mainNavItems: NavItem[] = [
         </SidebarHeader>
 
         <SidebarContent>
-            <NavMain :items="mainNavItems" />
+            <NavMain :groups="navGroups" />
         </SidebarContent>
 
         <SidebarFooter>

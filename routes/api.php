@@ -5,6 +5,7 @@ use App\Http\Controllers\AttendanceSettingsController;
 use App\Http\Controllers\BiometricLogController;
 use App\Http\Controllers\CalendarEventController;
 use App\Http\Controllers\DepartmentsController;
+use App\Http\Controllers\DocumentsController;
 use App\Http\Controllers\EmployeesController;
 use App\Http\Controllers\EventAttendeeController;
 use App\Http\Controllers\EventCategoryController;
@@ -99,4 +100,55 @@ Route::middleware('auth:web')->group(function () {
     Route::get('/calendar-events/{calendarEvent}/attend-status', [EventAttendeeController::class, 'check'])
         ->whereNumber('calendarEvent')
         ->name('api.event-attendees.check');
+});
+
+// Documents API routes (require authentication)
+Route::middleware('auth:web')->group(function () {
+    Route::post('/documents', [DocumentsController::class, 'store'])
+        ->name('api.documents.store');
+    Route::get('/documents', [DocumentsController::class, 'indexApi'])
+        ->name('api.documents.index');
+    Route::put('/documents/{document}', [DocumentsController::class, 'update'])
+        ->whereNumber('document')
+        ->name('api.documents.update');
+    Route::delete('/documents/{document}', [DocumentsController::class, 'destroy'])
+        ->whereNumber('document')
+        ->name('api.documents.destroy');
+    Route::post('/documents/{document}/approve', [DocumentsController::class, 'approve'])
+        ->whereNumber('document')
+        ->name('api.documents.approve');
+    Route::post('/documents/{document}/reject', [DocumentsController::class, 'reject'])
+        ->whereNumber('document')
+        ->name('api.documents.reject');
+    Route::post('/documents/{document}/request-access', [DocumentsController::class, 'requestAccess'])
+        ->whereNumber('document')
+        ->name('api.documents.request-access');
+    Route::post('/documents/{document}/restore', [DocumentsController::class, 'restore'])
+        ->whereNumber('document')
+        ->name('api.documents.restore');
+    Route::delete('/documents/{document}/force-delete', [DocumentsController::class, 'forceDelete'])
+        ->whereNumber('document')
+        ->name('api.documents.force-delete');
+    Route::post('/documents/restore-all', [DocumentsController::class, 'restoreAll'])
+        ->name('api.documents.restore-all');
+    Route::delete('/documents/force-delete-all', [DocumentsController::class, 'forceDeleteAll'])
+        ->name('api.documents.force-delete-all');
+    Route::put('/documents/{document}/content', [DocumentsController::class, 'updateContent'])
+        ->whereNumber('document')
+        ->name('api.documents.update-content');
+    Route::get('/documents/search', [DocumentsController::class, 'search'])
+        ->name('api.documents.search');
+});
+
+// Document Access Requests API routes (require authentication)
+Route::middleware('auth:web')->group(function () {
+    Route::post('/document-access-requests/{accessRequest}/approve', [\App\Http\Controllers\DocumentAccessRequestsController::class, 'approve'])
+        ->whereNumber('accessRequest')
+        ->name('api.document-access-requests.approve');
+    Route::post('/document-access-requests/{accessRequest}/reject', [\App\Http\Controllers\DocumentAccessRequestsController::class, 'reject'])
+        ->whereNumber('accessRequest')
+        ->name('api.document-access-requests.reject');
+    Route::put('/document-access-requests/{accessRequest}', [\App\Http\Controllers\DocumentAccessRequestsController::class, 'update'])
+        ->whereNumber('accessRequest')
+        ->name('api.document-access-requests.update');
 });

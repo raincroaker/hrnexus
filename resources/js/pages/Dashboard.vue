@@ -3,8 +3,8 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 import AppLayout from '@/layouts/AppLayout.vue';
 import { dashboard } from '@/routes';
 import { type BreadcrumbItem } from '@/types';
-import { Head } from '@inertiajs/vue3';
-import { Calendar as CalendarIcon, Clock, Users, ClipboardList, Cake, MessageSquare, ChevronLeft, ChevronRight, Video } from 'lucide-vue-next'
+import { Head, Link } from '@inertiajs/vue3';
+import { Calendar as CalendarIcon, Clock, Users, ClipboardList, Cake, MessageSquare, Video } from 'lucide-vue-next'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -28,7 +28,6 @@ import {
   Legend,
   ArcElement
 } from 'chart.js'
-// @ts-expect-error - chartjs-plugin-datalabels may not have type definitions
 import ChartDataLabels from 'chartjs-plugin-datalabels'
 
 ChartJS.register(CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend, ArcElement, ChartDataLabels)
@@ -40,14 +39,107 @@ const breadcrumbs: BreadcrumbItem[] = [
     },
 ];
 
-// Current user
-const currentUser = ref({
-  name: 'Jerick',
-  role: 'Admin', // or 'Admin'
+// Props from backend
+const props = defineProps<{
+  currentUser?: {
+    id: number;
+    name: string;
+    first_name: string;
+    last_name: string;
+    employee_code: string;
+    department: string;
+    department_id: number | null;
+    position: string;
+    position_id: number | null;
+    role: 'employee' | 'department_manager' | 'admin';
+    email: string;
+    contact_number: string | null;
+    birth_date: string | null;
+    avatar: string | null;
+  };
+  last7Attendance?: Array<{
+    date: string;
+    timeIn: string | null;
+    timeOut: string | null;
+    hoursWorked: number | null;
+    status: string;
+  }>;
+  todayAttendance?: {
+    timeIn: string | null;
+    timeOut: string | null;
+    date: string;
+  };
+  events?: Array<{
+    id: number;
+    title: string;
+    date: string;
+    time: string;
+    type: string;
+    isToday: boolean;
+    location?: string;
+  }>;
+  birthdays?: Array<{
+    id: number;
+    name: string;
+    department: string;
+    date: string;
+    age: number;
+  }>;
+  unreadMessages?: Array<{
+    id: number;
+    sender: string;
+    message: string;
+    time: string;
+  }>;
+  employeeAttendance?: Array<{
+    id: number;
+    name: string;
+    department: string;
+    timeIn: string;
+    timeOut: string;
+    status: string;
+  }>;
+  stats?: {
+    totalPresents: number;
+    workingDays: string;
+    totalLate: number;
+    lateRate: string;
+    totalIncomplete: number;
+    incompleteRate: string;
+    hoursWorked: string;
+    averageDaily: string;
+  };
+}>()
+
+// Current user (from props or fallback)
+const currentUser = computed(() => props.currentUser || { 
+  id: 0,
+  name: 'User', 
+  first_name: 'User',
+  last_name: '',
+  employee_code: '',
+  department: '',
+  department_id: null,
+  position: '',
+  position_id: null,
+  role: 'employee' as const,
+  email: '',
+  contact_number: null,
+  birth_date: null,
+  avatar: null
 })
 
-// View mode
-const viewMode = ref<'monthly' | 'weekly'>('monthly')
+// Normalize role (handle case sensitivity)
+const normalizedRole = computed(() => {
+  if (!currentUser.value) return 'employee'
+  return currentUser.value.role.toLowerCase()
+})
+
+// Check if user is admin
+const isAdmin = computed(() => normalizedRole.value === 'admin')
+
+// Last 7 attendance records (from props)
+const last7Attendance = computed(() => props.last7Attendance || [])
 
 // Date and time
 const currentDateTime = ref(new Date())
@@ -74,18 +166,6 @@ onMounted(() => {
   timeInterval = window.setInterval(() => {
     currentDateTime.value = new Date()
   }, 1000)
-  
-  // Add event indicators to calendar
-  updateCalendarEventIndicators()
-  
-  // Re-apply indicators when calendar changes (month navigation)
-  setTimeout(() => {
-    const observer = new MutationObserver(updateCalendarEventIndicators)
-    const calendarEl = document.querySelector('[data-radix-calendar]')
-    if (calendarEl) {
-      observer.observe(calendarEl, { childList: true, subtree: true })
-    }
-  }, 500)
 })
 
 onUnmounted(() => {
@@ -94,23 +174,15 @@ onUnmounted(() => {
   }
 })
 
-// Today's attendance
-const todayAttendance = ref({
-  timeIn: '08:45 AM',  // Set to empty string '' if not clocked in yet
-  timeOut: '',         // Set to empty string '' if not clocked out yet
+// Today's attendance (from props)
+const todayAttendance = computed(() => props.todayAttendance || {
+  timeIn: null,
+  timeOut: null,
   date: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
 })
 
-// Events list
-const events = ref([
-  { id: 1, title: 'Team Meeting', date: '2025-11-15', time: '10:00 AM', type: 'meeting', isToday: true },
-  { id: 2, title: 'Project Deadline', date: '2025-11-18', time: '5:00 PM', type: 'deadline', isToday: false },
-  { id: 3, title: 'Company Holiday', date: '2025-11-25', time: 'All Day', type: 'holiday', isToday: false },
-  { id: 4, title: 'Performance Review', date: '2025-11-20', time: '2:00 PM', type: 'meeting', isToday: false },
-  { id: 5, title: 'Training Session', date: '2025-11-22', time: '9:00 AM', type: 'training', isToday: false },
-  { id: 6, title: 'Client Call', date: '2025-11-15', time: '2:00 PM', type: 'meeting', isToday: true },
-  { id: 7, title: 'Code Review', date: '2025-11-15', time: '4:00 PM', type: 'training', isToday: true }
-])
+// Events list (from props)
+const events = computed(() => props.events || [])
 
 const getEventTypeColor = (type: string) => {
   switch (type) {
@@ -122,63 +194,7 @@ const getEventTypeColor = (type: string) => {
   }
 }
 
-// Schedule widget state
-const scheduleSearch = ref('')
-const scheduleTab = ref<'today' | 'upcoming'>('today')
-const selectedScheduleDate = ref(new Date())
-
-// Generate date range for horizontal scroller (7 days: 3 before, today, 3 after)
-const dateRange = computed(() => {
-  const dates = []
-  const baseDate = new Date(selectedScheduleDate.value)
-  
-  for (let i = -3; i <= 3; i++) {
-    const date = new Date(baseDate)
-    date.setDate(baseDate.getDate() + i)
-    dates.push(date)
-  }
-  
-  return dates
-})
-
-// Check if date is today
-const isToday = (date: Date) => {
-  const today = new Date()
-  return date.getDate() === today.getDate() &&
-         date.getMonth() === today.getMonth() &&
-         date.getFullYear() === today.getFullYear()
-}
-
-// Check if date is selected
-const isSelectedDate = (date: Date) => {
-  return date.getDate() === selectedScheduleDate.value.getDate() &&
-         date.getMonth() === selectedScheduleDate.value.getMonth() &&
-         date.getFullYear() === selectedScheduleDate.value.getFullYear()
-}
-
-// Format date for display
-const formatScheduleDate = (date: Date, format: 'day' | 'date' | 'full') => {
-  if (format === 'day') {
-    return date.toLocaleDateString('en-US', { weekday: 'short' })
-  } else if (format === 'date') {
-    return date.getDate().toString()
-  } else {
-    return date.toLocaleDateString('en-US', { month: 'short', year: 'numeric' })
-  }
-}
-
-// Navigate dates
-const previousWeek = () => {
-  const newDate = new Date(selectedScheduleDate.value)
-  newDate.setDate(newDate.getDate() - 7)
-  selectedScheduleDate.value = newDate
-}
-
-const nextWeek = () => {
-  const newDate = new Date(selectedScheduleDate.value)
-  newDate.setDate(newDate.getDate() + 7)
-  selectedScheduleDate.value = newDate
-}
+// Events - separate today and upcoming
 
 // Helper function to get color and border for event type
 const getScheduleEventColors = (type: string) => {
@@ -196,35 +212,17 @@ const getScheduleEventColors = (type: string) => {
   }
 }
 
-// Filtered schedule events - using calendar events
-const filteredScheduleEvents = computed(() => {
+// Today events
+const todayEvents = computed(() => {
   return events.value
-    .filter(event => {
-      // Filter by tab (today or upcoming)
-      if (scheduleTab.value === 'today') {
-        return event.isToday
-      } else {
-        // Show only future events (not today)
-        return !event.isToday
-      }
-    })
-    .filter(event => {
-      // Filter by search
-      if (scheduleSearch.value) {
-        const search = scheduleSearch.value.toLowerCase()
-        return event.title.toLowerCase().includes(search) ||
-               event.type.toLowerCase().includes(search)
-      }
-      return true
-    })
+    .filter(event => event.isToday)
     .map(event => {
-      // Transform calendar event to schedule event format
       const colors = getScheduleEventColors(event.type)
       return {
         ...event,
         startTime: event.time,
         endTime: '',
-        location: event.type === 'meeting' ? 'Conference Room' : '',
+        location: event.location || '',
         department: 'General',
         attendees: [],
         ...colors
@@ -232,84 +230,36 @@ const filteredScheduleEvents = computed(() => {
     })
 })
 
-// Get events for a specific date
-const getEventsForDate = (dateStr: string) => {
-  return events.value.filter(event => event.date === dateStr)
-}
-
-// Add event indicators to calendar dates
-const updateCalendarEventIndicators = () => {
-  setTimeout(() => {
-    const calendarButtons = document.querySelectorAll('[data-radix-calendar] button[data-radix-collection-item]')
-    calendarButtons.forEach((button) => {
-      const dateText = button.textContent?.trim()
-      if (dateText && !isNaN(parseInt(dateText))) {
-        const day = parseInt(dateText).toString().padStart(2, '0')
-        const dateStr = `2025-11-${day}`
-        
-        const eventsForDate = getEventsForDate(dateStr)
-        if (eventsForDate.length > 0) {
-          button.setAttribute('data-has-events', 'true')
-          button.setAttribute('data-event-count', eventsForDate.length.toString())
-          button.setAttribute('title', eventsForDate.map(e => `${e.title} - ${e.time}`).join('\n'))
-        }
+// Upcoming events
+const upcomingEvents = computed(() => {
+  return events.value
+    .filter(event => !event.isToday)
+    .map(event => {
+      const colors = getScheduleEventColors(event.type)
+      return {
+        ...event,
+        startTime: event.time,
+        endTime: '',
+        location: event.location || '',
+        department: 'General',
+        attendees: [],
+        ...colors
       }
     })
-  }, 300)
-}
+})
 
-// Birthdays list
-const birthdays = ref([
-  { id: 1, name: 'Sarah Johnson', department: 'Marketing', date: 'Today', age: 28 },
-  { id: 2, name: 'Michael Chen', department: 'Engineering', date: 'Nov 16', age: 32 },
-  { id: 3, name: 'Emma Davis', department: 'HR', date: 'Nov 18', age: 26 }
-])
+// Birthdays list (from props)
+const birthdays = computed(() => props.birthdays || [])
 
-// Unread messages
-const unreadMessages = ref([
-  { id: 1, sender: 'Sarah Johnson', avatar: 'SJ', message: 'Can you review the project proposal?', time: '5 min ago', unread: 2 },
-  { id: 2, sender: 'Engineering Team', avatar: 'ET', message: 'Meeting rescheduled to 3 PM', time: '15 min ago', unread: 3 },
-  { id: 3, sender: 'Michael Chen', avatar: 'MC', message: 'Thanks for the quick response!', time: '1 hour ago', unread: 1 },
-  { id: 4, sender: 'HR Department', avatar: 'HR', message: 'Please submit your timesheet', time: '2 hours ago', unread: 1 }
-])
+// Unread messages (from props)
+const unreadMessages = computed(() => props.unreadMessages || [])
 
 // Pagination for employee attendance
 const currentPage = ref(1)
 const itemsPerPage = 5
 
-// Employee attendance today
-const employeeAttendance = ref([
-  { id: 1, name: 'Sarah Johnson', department: 'Marketing', timeIn: '08:45 AM', timeOut: '05:30 PM', status: 'present' },
-  { id: 2, name: 'Michael Chen', department: 'Engineering', timeIn: '08:30 AM', timeOut: '05:15 PM', status: 'present' },
-  { id: 3, name: 'Emma Davis', department: 'HR', timeIn: '09:00 AM', timeOut: '05:00 PM', status: 'present' },
-  { id: 4, name: 'John Smith', department: 'Engineering', timeIn: '08:50 AM', timeOut: '05:10 PM', status: 'present' },
-  { id: 5, name: 'Lisa Anderson', department: 'Sales', timeIn: '09:15 AM', timeOut: '05:45 PM', status: 'late' },
-  { id: 6, name: 'David Wilson', department: 'Marketing', timeIn: '08:40 AM', timeOut: '05:25 PM', status: 'present' },
-  { id: 7, name: 'Jennifer Lee', department: 'Finance', timeIn: '08:35 AM', timeOut: '-', status: 'incomplete' },
-  { id: 8, name: 'Robert Brown', department: 'Engineering', timeIn: '08:55 AM', timeOut: '-', status: 'incomplete' },
-  { id: 9, name: 'Amanda White', department: 'Marketing', timeIn: '08:50 AM', timeOut: '05:20 PM', status: 'present' },
-  { id: 10, name: 'James Miller', department: 'Sales', timeIn: '08:35 AM', timeOut: '05:35 PM', status: 'present' },
-  { id: 11, name: 'Patricia Garcia', department: 'HR', timeIn: '09:20 AM', timeOut: '05:50 PM', status: 'late' },
-  { id: 12, name: 'Daniel Martinez', department: 'Engineering', timeIn: '08:45 AM', timeOut: '05:15 PM', status: 'present' },
-  { id: 13, name: 'Linda Rodriguez', department: 'Finance', timeIn: '08:40 AM', timeOut: '-', status: 'incomplete' },
-  { id: 14, name: 'Christopher Lee', department: 'Sales', timeIn: '09:25 AM', timeOut: '05:55 PM', status: 'late' },
-  { id: 15, name: 'Barbara Taylor', department: 'Marketing', timeIn: '08:30 AM', timeOut: '05:00 PM', status: 'present' },
-  { id: 16, name: 'Matthew Thomas', department: 'Engineering', timeIn: '08:55 AM', timeOut: '-', status: 'incomplete' },
-  { id: 17, name: 'Nancy Anderson', department: 'HR', timeIn: '08:45 AM', timeOut: '05:15 PM', status: 'present' },
-  { id: 18, name: 'Joseph Jackson', department: 'Finance', timeIn: '09:10 AM', timeOut: '05:40 PM', status: 'late' },
-  { id: 19, name: 'Susan White', department: 'Sales', timeIn: '08:50 AM', timeOut: '05:20 PM', status: 'present' },
-  { id: 20, name: 'Charles Harris', department: 'Engineering', timeIn: '08:35 AM', timeOut: '-', status: 'incomplete' },
-  { id: 21, name: 'Karen Moore', department: 'Marketing', timeIn: '08:40 AM', timeOut: '05:10 PM', status: 'present' },
-  { id: 22, name: 'Steven Clark', department: 'Sales', timeIn: '09:30 AM', timeOut: '06:00 PM', status: 'late' },
-  { id: 23, name: 'Betty Lewis', department: 'HR', timeIn: '08:55 AM', timeOut: '05:25 PM', status: 'present' },
-  { id: 24, name: 'Edward Walker', department: 'Engineering', timeIn: '08:30 AM', timeOut: '-', status: 'incomplete' },
-  { id: 25, name: 'Dorothy Hall', department: 'Finance', timeIn: '08:45 AM', timeOut: '05:15 PM', status: 'present' },
-  { id: 26, name: 'Brian Allen', department: 'Marketing', timeIn: '09:05 AM', timeOut: '05:35 PM', status: 'late' },
-  { id: 27, name: 'Helen Young', department: 'Sales', timeIn: '08:50 AM', timeOut: '05:20 PM', status: 'present' },
-  { id: 28, name: 'Ronald King', department: 'Engineering', timeIn: '08:40 AM', timeOut: '-', status: 'incomplete' },
-  { id: 29, name: 'Sandra Wright', department: 'HR', timeIn: '08:35 AM', timeOut: '05:05 PM', status: 'present' },
-  { id: 30, name: 'Kevin Scott', department: 'Finance', timeIn: '09:20 AM', timeOut: '05:50 PM', status: 'late' }
-])
+// Employee attendance today (from props, admin only)
+const employeeAttendance = computed(() => props.employeeAttendance || [])
 
 const getStatusBadge = (status: string) => {
   switch (status) {
@@ -354,107 +304,106 @@ const visiblePages = computed(() => {
   return pages
 })
 
-// Stats data - User's personal attendance
-const stats = ref({
-  totalEmployees: 26,
-  employeeHiring: 4,
-  hiringPercentage: '+15%',
-  totalPresents: 15,
-  workingDays: '20 Days',
-  presentTrend: '+5%',
-  presentTrendUp: true,
-  totalLate: 3,
-  lateRate: '15%',
-  lateTrend: '-2%',
-  lateTrendUp: false,
-  totalIncomplete: 2,
-  incompleteRate: '10%',
-  incompleteTrend: '+1',
-  incompleteTrendUp: true,
-  hoursWorked: '120h',
-  averageDaily: '8h/day',
-  hoursTrend: '+8h',
-  hoursTrendUp: true
+// Stats data - User's personal attendance (from props)
+const stats = computed(() => props.stats || {
+  totalPresents: 0,
+  workingDays: '0 Days',
+  totalLate: 0,
+  lateRate: '0%',
+  totalIncomplete: 0,
+  incompleteRate: '0%',
+  hoursWorked: '0h',
+  averageDaily: '0h/day'
 })
+
+// Helper function to calculate hours worked
+const calculateHours = (timeIn: string | null, timeOut: string | null): number | null => {
+  if (!timeIn || !timeOut) {
+    return null;
+  }
+
+  const parseTime = (time: string): number => {
+    const normalized = time.trim();
+    if (/am|pm/i.test(normalized)) {
+      const [timePart, period] = normalized.split(' ');
+      const [hours, minutes] = timePart.split(':').map(Number);
+      let adjustedHours = hours % 12;
+      if (period?.toUpperCase() === 'PM') {
+        adjustedHours += 12;
+      }
+      return adjustedHours + (minutes || 0) / 60;
+    }
+
+    const [hourString, minuteString = '0'] = normalized.split(':');
+    const hours = Number(hourString);
+    const minutes = Number(minuteString);
+    return hours + minutes / 60;
+  };
+  
+  const inHours = parseTime(timeIn);
+  const outHours = parseTime(timeOut);
+  const total = Math.max(outHours - inHours, 0);
+  return parseFloat(total.toFixed(2));
+};
 
 // Chart data for attendance overview (last 7 days)
 const attendanceChartData = computed(() => {
-  const isMonthly = viewMode.value === 'monthly'
-  
-  if (isMonthly) {
-    // Monthly view - show weekly personal attendance (days per week)
-    return {
-      labels: ['Week 1', 'Week 2', 'Week 3', 'Week 4'],
-      datasets: [
-        {
-          label: 'Present',
-          data: [4, 5, 4, 3],
-          backgroundColor: 'rgba(34, 197, 94, 0.8)',
-          borderColor: '#16a34a',
-          borderWidth: 0,
-          borderRadius: 8,
-          borderSkipped: false,
-        },
-        {
-          label: 'Late',
-          data: [1, 0, 1, 1],
-          backgroundColor: 'rgba(249, 115, 22, 0.8)',
-          borderColor: '#ea580c',
-          borderWidth: 0,
-          borderRadius: 8,
-          borderSkipped: false,
-        },
-        {
-          label: 'Incomplete',
-          data: [0, 0, 0, 1],
-          backgroundColor: 'rgba(239, 68, 68, 0.8)',
-          borderColor: '#dc2626',
-          borderWidth: 0,
-          borderRadius: 8,
-          borderSkipped: false,
-        }
-      ]
+  const data = last7Attendance.value.map(record => {
+    const hours = record.hoursWorked ?? calculateHours(record.timeIn, record.timeOut);
+    const status = record.status.toLowerCase();
+    // Show incomplete records as 0.5h so they're visible but clearly incomplete
+    if (status === 'incomplete' && (hours === null || hours === 0)) {
+      return 0.5;
     }
-  } else {
-    // Weekly view - show daily data
-    return {
-      labels: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
-      datasets: [
-        {
-          label: 'Present',
-          data: [1, 1, 0, 1, 1, 0, 0],
-          backgroundColor: 'rgba(34, 197, 94, 0.8)',
-          borderColor: '#16a34a',
-          borderWidth: 0,
-          borderRadius: 8,
-          borderSkipped: false,
-        },
-        {
-          label: 'Late',
-          data: [0, 0, 1, 0, 0, 0, 0],
-          backgroundColor: 'rgba(249, 115, 22, 0.8)',
-          borderColor: '#ea580c',
-          borderWidth: 0,
-          borderRadius: 8,
-          borderSkipped: false,
-        },
-        {
-          label: 'Incomplete',
-          data: [0, 0, 0, 0, 0, 0, 0],
-          backgroundColor: 'rgba(239, 68, 68, 0.8)',
-          borderColor: '#dc2626',
-          borderWidth: 0,
-          borderRadius: 8,
-          borderSkipped: false,
-        }
-      ]
-    }
-  }
+    return hours ?? 0;
+  });
+
+  return {
+    labels: last7Attendance.value.map(record => {
+      // Format date to show day name and date (e.g., "Mon, Nov 15")
+      const date = new Date(record.date);
+      return date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+    }),
+    datasets: [{
+      label: 'Hours Worked',
+      data,
+      backgroundColor: last7Attendance.value.map(record => {
+        const status = record.status.toLowerCase();
+        if (status === 'present') return 'rgba(34, 197, 94, 0.8)';
+        if (status === 'late') return 'rgba(249, 115, 22, 0.8)';
+        return 'rgba(239, 68, 68, 0.8)';
+      }),
+      borderColor: last7Attendance.value.map(record => {
+        const status = record.status.toLowerCase();
+        if (status === 'present') return '#16a34a';
+        if (status === 'late') return '#ea580c';
+        return '#dc2626';
+      }),
+      borderWidth: 2,
+      borderRadius: 8,
+      borderSkipped: false,
+      hoverBackgroundColor: last7Attendance.value.map(record => {
+        const status = record.status.toLowerCase();
+        if (status === 'present') return 'rgba(34, 197, 94, 1)';
+        if (status === 'late') return 'rgba(249, 115, 22, 1)';
+        return 'rgba(239, 68, 68, 1)';
+      }),
+      hoverBorderWidth: 3,
+    }]
+  };
 })
 
 const attendanceChartOptions = ref({
   responsive: true,
   maintainAspectRatio: false,
+  interaction: {
+    intersect: false,
+    mode: 'index' as const
+  },
+  animation: {
+    duration: 1000,
+    easing: 'easeInOutQuart' as const
+  },
   plugins: {
     legend: {
       display: false
@@ -465,47 +414,103 @@ const attendanceChartOptions = ref({
       bodyColor: '#f9fafb',
       borderColor: 'rgba(75, 85, 99, 0.3)',
       borderWidth: 1,
-      cornerRadius: 8,
-      padding: 12,
-      displayColors: true,
-      boxWidth: 8,
-      boxHeight: 8,
-      usePointStyle: true
+      cornerRadius: 12,
+      padding: 16,
+      displayColors: false,
+      titleFont: {
+        size: 14,
+        weight: 'bold' as const
+      },
+      bodyFont: {
+        size: 13
+      },
+      callbacks: {
+        title: (context: any) => {
+          return `Date: ${context[0].label}`;
+        },
+        label: (context: any) => {
+          const index = context.dataIndex;
+          const record = last7Attendance.value[index];
+          const hours = record.hoursWorked ?? calculateHours(record.timeIn, record.timeOut);
+          const status = record.status.toLowerCase();
+          const isIncomplete = status === 'incomplete' && (hours === null || hours === 0);
+          
+          if (isIncomplete) {
+            return [
+              `Status: Incomplete`,
+              `Hours Worked: Missing time data`,
+              `Time In: ${record.timeIn || 'Not recorded'}`,
+              `Time Out: ${record.timeOut || 'Not recorded'}`,
+              `⚠️ This bar represents an incomplete record`
+            ];
+          }
+          
+          return [
+            `Hours Worked: ${hours ?? 0}h`,
+            `Time In: ${record.timeIn || 'Not recorded'}`,
+            `Time Out: ${record.timeOut || 'Not recorded'}`,
+            `Status: ${record.status.charAt(0).toUpperCase() + record.status.slice(1)}`
+          ];
+        }
+      }
     }
   },
   scales: {
     y: {
       beginAtZero: true,
-      title: {
-        display: true,
-        text: 'Days',
+      max: 10,
+      ticks: {
+        stepSize: 2,
         color: '#9ca3af',
         font: {
           size: 12,
-          weight: 500
-        }
-      },
-      ticks: {
-        stepSize: 1,
-        color: '#9ca3af',
-        font: {
-          size: 11
+          weight: 500 as any
+        },
+        callback: function(value: any) {
+          return value + 'h';
         }
       },
       grid: {
+        display: true,
         color: 'rgba(55, 65, 81, 0.1)',
         drawBorder: false
+      },
+      title: {
+        display: true,
+        text: 'Hours Worked',
+        color: '#6b7280',
+        font: {
+          size: 13,
+          weight: 600 as any
+        },
+        padding: {
+          bottom: 10
+        }
       }
     },
     x: {
       ticks: {
         color: '#9ca3af',
         font: {
-          size: 11
-        }
+          size: 12,
+          weight: 500 as any
+        },
+        maxRotation: 0
       },
       grid: {
         display: false
+      },
+      title: {
+        display: true,
+        text: 'Date',
+        color: '#6b7280',
+        font: {
+          size: 13,
+          weight: 600 as any
+        },
+        padding: {
+          top: 10
+        }
       }
     }
   }
@@ -577,7 +582,7 @@ const attendanceStatusChartOptions = ref({
       borderRadius: 8 ,
       color: '#374151',
       font: {
-        weight: 'bold',
+        weight: 'bold' as const,
         size: 11,
       },
       padding: {
@@ -591,9 +596,9 @@ const attendanceStatusChartOptions = ref({
         const percentage = ((value / total) * 100).toFixed(1)
         return `${value}\n${percentage}%`
       },
-      textAlign: 'center',
-      anchor: 'center',
-      align: 'center'
+      textAlign: 'center' as const,
+      anchor: 'center' as const,
+      align: 'center' as const
     }
   }
 })
@@ -614,13 +619,13 @@ const attendanceStatusChartOptions = ref({
                         <div>
                             <div class="flex items-center gap-2 mb-1">
                                 <h1 class="text-2xl font-bold text-foreground">
-                                    Hi {{ currentUser.name }}!
+                                    Hi {{ currentUser.first_name || currentUser.name }}!
                                 </h1>
                                 <Badge 
-                                    :class="currentUser.role === 'Admin' ? 'bg-purple-100 text-purple-700 dark:bg-purple-900 dark:text-purple-300' : 'bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300'"
+                                    :class="currentUser.role === 'admin' ? 'bg-purple-100 text-purple-700 dark:bg-purple-900 dark:text-purple-300' : 'bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300'"
                                     class="text-xs"
                                 >
-                                    {{ currentUser.role }}
+                                    {{ currentUser.role === 'admin' ? 'Admin' : currentUser.role === 'department_manager' ? 'Dept Manager' : 'Employee' }}
                                 </Badge>
                             </div>
                             <p class="text-sm text-muted-foreground">Welcome back! Here's your overview for today.</p>
@@ -743,147 +748,60 @@ const attendanceStatusChartOptions = ref({
                 <!-- Attendance Overview Chart (2 columns, row 1) -->
                 <Card class="lg:col-span-2 bg-background border border-sidebar-border/70 dark:border-sidebar-border shadow-sm">
                     <CardHeader class="pb-3">
-                        <div class="flex items-center justify-between">
-                            <CardTitle class="text-base font-semibold flex items-center gap-2">
-                                <Users class="h-4 w-4 text-blue-600 dark:text-blue-400" />
-                                Attendance Overview
-                            </CardTitle>
-                            <div class="flex gap-1 bg-muted/50 p-0.5 rounded-lg">
-                                <Button 
-                                    variant="ghost" 
-                                    size="sm"
-                                    @click="viewMode = 'weekly'"
-                                    :class="viewMode === 'weekly' ? 'bg-background shadow-sm' : ''"
-                                    class="h-6 text-xs px-2.5"
-                                >
-                                    Weekly
-                                </Button>
-                                <Button 
-                                    variant="ghost" 
-                                    size="sm"
-                                    @click="viewMode = 'monthly'"
-                                    :class="viewMode === 'monthly' ? 'bg-background shadow-sm' : ''"
-                                    class="h-6 text-xs px-2.5"
-                                >
-                                    Monthly
-                                </Button>
+                        <CardTitle class="text-base font-semibold flex items-center gap-2">
+                            <Users class="h-4 w-4 text-blue-600 dark:text-blue-400" />
+                            Attendance Overview
+                        </CardTitle>
+                    </CardHeader>
+                    <CardContent class="h-[300px] pb-4">
+                        <Bar :data="attendanceChartData" :options="attendanceChartOptions" />
+                        <div class="flex items-center justify-center gap-6 mt-4">
+                            <div class="flex items-center gap-2">
+                                <div class="w-4 h-4 rounded" style="background-color: rgba(34, 197, 94, 0.85); border: 2px solid #16a34a;"></div>
+                                <span class="text-sm text-muted-foreground">Present</span>
+                            </div>
+                            <div class="flex items-center gap-2">
+                                <div class="w-4 h-4 rounded" style="background-color: rgba(249, 115, 22, 0.85); border: 2px solid #ea580c;"></div>
+                                <span class="text-sm text-muted-foreground">Late</span>
+                            </div>
+                            <div class="flex items-center gap-2">
+                                <div class="w-4 h-4 rounded" style="background-color: rgba(239, 68, 68, 0.85); border: 2px solid #dc2626;"></div>
+                                <span class="text-sm text-muted-foreground">Incomplete</span>
                             </div>
                         </div>
-                    </CardHeader>
-                    <CardContent class="h-[240px] pb-4">
-                        <Bar :data="attendanceChartData" :options="attendanceChartOptions" />
                     </CardContent>
                 </Card>
 
-                <!-- Schedule Widget (1 column, spans 2 rows) -->
-                <Card class="lg:row-span-2 bg-background border border-sidebar-border/70 dark:border-sidebar-border shadow-sm">
+                <!-- Today Events Card (1 column, row 1) -->
+                <Card class="bg-background border border-sidebar-border/70 dark:border-sidebar-border shadow-sm">
                     <CardHeader class="pb-2">
                         <div class="flex items-center justify-between">
                             <div class="flex items-center gap-1.5">
-                                <CalendarIcon class="h-4 w-4 text-purple-600 dark:text-purple-400" />
-                                <CardTitle class="text-sm font-semibold">Schedule</CardTitle>
+                                <CalendarIcon class="h-4 w-4 text-blue-600 dark:text-blue-400" />
+                                <CardTitle class="text-sm font-semibold">Today Events</CardTitle>
                             </div>
-                            <Button variant="ghost" size="sm" class="h-6 text-xs text-primary hover:text-primary/80 px-2">
-                                See All →
-                            </Button>
+                            <Link href="/calendar">
+                                <Button variant="ghost" size="sm" class="h-6 text-xs text-primary hover:text-primary/80 px-2">
+                                    See All →
+                                </Button>
+                            </Link>
                         </div>
                     </CardHeader>
-                    <CardContent class="space-y-2.5">
-                        <!-- Month/Year Display with Navigation -->
-                        <div class="flex items-center justify-between px-1">
-                            <Button 
-                                variant="ghost" 
-                                size="sm" 
-                                @click="previousWeek"
-                                class="h-6 w-6 p-0"
-                            >
-                                <ChevronLeft class="h-3.5 w-3.5" />
-                            </Button>
-                            <span class="text-xs font-semibold text-foreground">
-                                {{ formatScheduleDate(selectedScheduleDate, 'full') }}
-                            </span>
-                            <Button 
-                                variant="ghost" 
-                                size="sm" 
-                                @click="nextWeek"
-                                class="h-6 w-6 p-0"
-                            >
-                                <ChevronRight class="h-3.5 w-3.5" />
-                            </Button>
-                        </div>
-
-                        <!-- Horizontal Date Scroller -->
-                        <div class="flex gap-2 overflow-x-auto pb-2 scrollbar-thin justify-center">
-                            <button
-                                v-for="date in dateRange"
-                                :key="date.toISOString()"
-                                @click="selectedScheduleDate = date"
-                                class="flex flex-col items-center justify-center text-center min-w-[48px] h-[56px] rounded-lg border transition-all duration-200"
-                                :class="[
-                                    isSelectedDate(date) 
-                                        ? 'bg-primary text-primary-foreground border-primary shadow-md scale-105' 
-                                        : 'bg-card/50 border-sidebar-border/50 hover:border-primary/30 hover:bg-card hover:scale-102',
-                                    isToday(date) && !isSelectedDate(date) ? 'border-primary/40 bg-primary/5' : ''
-                                ]"
-                            >
-                                <span class="text-xs font-medium mb-0.5 w-full opacity-90">
-                                    {{ formatScheduleDate(date, 'day') }}
-                                </span>
-                                <span class="text-lg font-bold w-full">
-                                    {{ formatScheduleDate(date, 'date') }}
-                                </span>
-                            </button>
-                        </div>
-
-                        <!-- Tabs -->
-                        <div class="flex border-b border-sidebar-border/50">
-                            <button
-                                @click="scheduleTab = 'today'"
-                                class="flex-1 flex items-center justify-center gap-1 py-2 text-xs font-medium transition-all relative"
-                                :class="scheduleTab === 'today' ? 'text-foreground' : 'text-muted-foreground hover:text-foreground'"
-                            >
-                                <CalendarIcon 
-                                    class="h-3 w-3" 
-                                    :class="scheduleTab === 'today' ? 'text-blue-500' : ''"
-                                />
-                                Today
-                                <span 
-                                    v-if="scheduleTab === 'today'"
-                                    class="absolute bottom-0 left-0 right-0 h-0.5 bg-blue-500"
-                                ></span>
-                            </button>
-                            <button
-                                @click="scheduleTab = 'upcoming'"
-                                class="flex-1 flex items-center justify-center gap-1 py-2 text-xs font-medium transition-all relative"
-                                :class="scheduleTab === 'upcoming' ? 'text-foreground' : 'text-muted-foreground hover:text-foreground'"
-                            >
-                                <Clock 
-                                    class="h-3 w-3" 
-                                    :class="scheduleTab === 'upcoming' ? 'text-purple-500' : ''"
-                                />
-                                Upcoming
-                                <span 
-                                    v-if="scheduleTab === 'upcoming'"
-                                    class="absolute bottom-0 left-0 right-0 h-0.5 bg-purple-500"
-                                ></span>
-                            </button>
-                        </div>
-
-                        <!-- Events List -->
-                        <ScrollArea class="flex-1 min-h-0">
-                            <template v-if="filteredScheduleEvents.length === 0">
+                    <CardContent>
+                        <ScrollArea class="h-[240px] pr-3">
+                            <template v-if="todayEvents.length === 0">
                                 <div class="flex flex-col items-center justify-center h-[200px] text-center px-4">
                                     <div class="w-12 h-12 rounded-full bg-muted/50 flex items-center justify-center mb-3">
                                         <CalendarIcon class="h-6 w-6 text-muted-foreground/40" />
                                     </div>
-                                    <p class="text-sm font-medium text-foreground mb-0.5">No events {{ scheduleTab === 'today' ? 'today' : 'upcoming' }}</p>
+                                    <p class="text-sm font-medium text-foreground mb-0.5">No events today</p>
                                     <p class="text-xs text-muted-foreground">Your schedule is clear</p>
                                 </div>
                             </template>
                             <template v-else>
-                                <div class="space-y-2 pr-3">
+                                <div class="space-y-2">
                                     <div
-                                        v-for="event in filteredScheduleEvents"
+                                        v-for="event in todayEvents"
                                         :key="event.id"
                                         class="rounded-lg border border-sidebar-border/50 bg-card/50 p-3 transition-all duration-200 hover:shadow-md hover:bg-accent/50 hover:border-sidebar-border animate-in fade-in slide-in-from-bottom-2"
                                     >
@@ -919,7 +837,72 @@ const attendanceStatusChartOptions = ref({
                     </CardContent>
                 </Card>
 
-                <!-- Birthdays Card (1 column, row 2) -->
+                <!-- Upcoming Events Card (1 column, row 2) -->
+                <Card class="bg-background border border-sidebar-border/70 dark:border-sidebar-border shadow-sm">
+                    <CardHeader class="pb-2">
+                        <div class="flex items-center justify-between">
+                            <div class="flex items-center gap-1.5">
+                                <Clock class="h-4 w-4 text-purple-600 dark:text-purple-400" />
+                                <CardTitle class="text-sm font-semibold">Upcoming Events</CardTitle>
+                            </div>
+                            <Link href="/calendar">
+                                <Button variant="ghost" size="sm" class="h-6 text-xs text-primary hover:text-primary/80 px-2">
+                                    See All →
+                                </Button>
+                            </Link>
+                        </div>
+                    </CardHeader>
+                    <CardContent>
+                        <ScrollArea class="h-[240px] pr-3">
+                            <template v-if="upcomingEvents.length === 0">
+                                <div class="flex flex-col items-center justify-center h-[200px] text-center px-4">
+                                    <div class="w-12 h-12 rounded-full bg-muted/50 flex items-center justify-center mb-3">
+                                        <Clock class="h-6 w-6 text-muted-foreground/40" />
+                                    </div>
+                                    <p class="text-sm font-medium text-foreground mb-0.5">No upcoming events</p>
+                                    <p class="text-xs text-muted-foreground">Your schedule is clear</p>
+                                </div>
+                            </template>
+                            <template v-else>
+                                <div class="space-y-2">
+                                    <div
+                                        v-for="event in upcomingEvents"
+                                        :key="event.id"
+                                        class="rounded-lg border border-sidebar-border/50 bg-card/50 p-3 transition-all duration-200 hover:shadow-md hover:bg-accent/50 hover:border-sidebar-border animate-in fade-in slide-in-from-bottom-2"
+                                    >
+                                        <div class="flex items-start justify-between gap-2 mb-1.5">
+                                            <h4 class="font-semibold text-sm text-foreground line-clamp-1 flex-1">
+                                                {{ event.title }}
+                                            </h4>
+                                            <Badge :class="getEventTypeColor(event.type)" class="text-xs capitalize flex-shrink-0 px-2 py-0.5">
+                                                {{ event.type }}
+                                            </Badge>
+                                        </div>
+                                        <div class="flex items-center gap-2 text-xs text-muted-foreground mb-2">
+                                            <div class="flex items-center gap-1">
+                                                <CalendarIcon class="h-3 w-3 flex-shrink-0" />
+                                                <span>{{ event.date }}</span>
+                                            </div>
+                                            <span>•</span>
+                                            <div class="flex items-center gap-1">
+                                                <Clock class="h-3 w-3 flex-shrink-0" />
+                                                <span>{{ event.startTime }}</span>
+                                            </div>
+                                        </div>
+
+                                        <!-- Location (always show, use placeholder if empty) -->
+                                        <div class="flex items-center gap-1.5 text-xs text-muted-foreground min-h-[20px]">
+                                            <Video class="h-3.5 w-3.5 flex-shrink-0" :class="event.location ? '' : 'opacity-0'" />
+                                            <span :class="event.location ? '' : 'opacity-0'">{{ event.location || 'No location' }}</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </template>
+                        </ScrollArea>
+                    </CardContent>
+                </Card>
+
+                <!-- Birthdays Card (1 column, row 3) -->
                 <Card class="bg-background border border-sidebar-border/70 dark:border-sidebar-border shadow-sm">
                     <CardHeader class="pb-2">
                         <div class="flex items-center justify-between">
@@ -996,9 +979,11 @@ const attendanceStatusChartOptions = ref({
                                 <MessageSquare class="h-4 w-4 text-green-600 dark:text-green-400" />
                                 <CardTitle class="text-sm font-semibold">Messages</CardTitle>
                             </div>
-                            <Badge class="text-xs font-semibold px-2 py-0.5 bg-green-600 hover:bg-green-700 dark:bg-green-500 dark:hover:bg-green-600">
-                                {{ unreadMessages.reduce((sum, msg) => sum + msg.unread, 0) }}
-                            </Badge>
+                            <Link href="/chat">
+                                <Button variant="ghost" size="sm" class="h-6 text-xs text-primary hover:text-primary/80 px-2">
+                                    See All →
+                                </Button>
+                            </Link>
                         </div>
                     </CardHeader>
                     <CardContent>
@@ -1012,25 +997,14 @@ const attendanceStatusChartOptions = ref({
                                 >
                                     <div class="absolute left-0 top-0 bottom-0 w-1 rounded-l-lg bg-green-500/60 opacity-0 group-hover:opacity-100 transition-opacity"></div>
                                     
-                                    <div class="flex items-start gap-3 pl-0.5">
-                                        <div class="flex-shrink-0 w-9 h-9 rounded-full bg-green-100 dark:bg-green-900/30 flex items-center justify-center text-green-700 dark:text-green-400 font-semibold text-sm border border-green-200 dark:border-green-800 group-hover:scale-110 transition-transform">
-                                            {{ message.avatar }}
+                                    <div class="flex-1 min-w-0 pl-0.5">
+                                        <div class="mb-1">
+                                            <h4 class="font-semibold text-sm text-foreground group-hover:text-green-700 dark:group-hover:text-green-400 transition-colors line-clamp-1">
+                                                {{ message.sender }}
+                                            </h4>
                                         </div>
-                                        <div class="flex-1 min-w-0">
-                                            <div class="flex items-start justify-between mb-1">
-                                                <h4 class="font-semibold text-sm text-foreground group-hover:text-green-700 dark:group-hover:text-green-400 transition-colors line-clamp-1">
-                                                    {{ message.sender }}
-                                                </h4>
-                                                <Badge 
-                                                    v-if="message.unread > 0"
-                                                    class="text-xs font-semibold px-1.5 py-0 bg-green-600 hover:bg-green-700 dark:bg-green-500 dark:hover:bg-green-600 ml-2 animate-pulse"
-                                                >
-                                                    {{ message.unread }}
-                                                </Badge>
-                                            </div>
-                                            <p class="text-xs text-muted-foreground line-clamp-1 mb-1">{{ message.message }}</p>
-                                            <span class="text-xs text-muted-foreground">{{ message.time }}</span>
-                                        </div>
+                                        <p class="text-xs font-medium text-foreground line-clamp-1 mb-1">{{ message.message }}</p>
+                                        <span class="text-xs text-muted-foreground">{{ message.time }}</span>
                                     </div>
                                 </a>
                             </div>
@@ -1039,8 +1013,8 @@ const attendanceStatusChartOptions = ref({
                 </Card>
             </div>
 
-            <!-- Team Attendance Section -->
-            <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+            <!-- Team Attendance Section (Admin Only) -->
+            <div v-if="isAdmin" class="grid grid-cols-1 lg:grid-cols-3 gap-4">
                 <!-- Employee Attendance Table (2 columns) -->
                 <Card class="lg:col-span-2 bg-background border border-sidebar-border/70 dark:border-sidebar-border shadow-sm">
                     <CardHeader class="pb-3">
@@ -1120,7 +1094,7 @@ const attendanceStatusChartOptions = ref({
                     </CardContent>
                 </Card>
 
-                <!-- Attendance Status Chart -->
+                <!-- Attendance Status Chart (Admin Only) -->
                 <Card class="bg-background border border-sidebar-border/70 dark:border-sidebar-border shadow-sm">
                     <CardHeader class="pb-3">
                         <CardTitle class="text-base font-semibold flex items-center gap-2">

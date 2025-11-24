@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import AppLogoIcon from '@/components/AppLogoIcon.vue';
 import { home } from '@/routes';
 import { Link } from '@inertiajs/vue3';
 
@@ -21,13 +20,15 @@ defineProps<{
                         class="flex flex-col items-center gap-2 font-medium"
                     >
                         <div
-                            class="mb-1 flex h-9 w-9 items-center justify-center rounded-md"
+                            class="mb-1 flex h-12 w-12 items-center justify-center rounded-md"
                         >
-                            <AppLogoIcon
-                                class="size-9 fill-current text-[var(--foreground)] dark:text-white"
+                            <img
+                                src="/images/HRNexusLogo.png"
+                                alt="HRNexus Logo"
+                                class="h-full w-full object-contain"
                             />
                         </div>
-                        <span class="sr-only">{{ title }}</span>
+                        <span class="text-2xl font-semibold">HRNexus</span>
                     </Link>
                     <div class="space-y-2 text-center">
                         <h1 class="text-xl font-medium">{{ title }}</h1>

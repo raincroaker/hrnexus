@@ -10,18 +10,23 @@ import { urlIsActive } from '@/lib/utils';
 import { type NavItem } from '@/types';
 import { Link, usePage } from '@inertiajs/vue3';
 
-defineProps<{
+interface NavGroup {
+    label: string;
     items: NavItem[];
+}
+
+defineProps<{
+    groups: NavGroup[];
 }>();
 
 const page = usePage();
 </script>
 
 <template>
-    <SidebarGroup class="px-2 py-0">
-        <SidebarGroupLabel>Platform</SidebarGroupLabel>
+    <SidebarGroup v-for="group in groups" :key="group.label" class="px-2 py-0">
+        <SidebarGroupLabel>{{ group.label }}</SidebarGroupLabel>
         <SidebarMenu>
-            <SidebarMenuItem v-for="item in items" :key="item.title">
+            <SidebarMenuItem v-for="item in group.items" :key="item.title">
                 <SidebarMenuButton
                     as-child
                     :is-active="urlIsActive(item.href, page.url)"

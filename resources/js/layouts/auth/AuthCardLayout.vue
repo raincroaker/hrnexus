@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import AppLogoIcon from '@/components/AppLogoIcon.vue';
 import {
     Card,
     CardContent,
@@ -23,13 +22,16 @@ defineProps<{
         <div class="flex w-full max-w-md flex-col gap-6">
             <Link
                 :href="home()"
-                class="flex items-center gap-2 self-center font-medium"
+                class="flex flex-col items-center gap-2 self-center font-medium"
             >
-                <div class="flex h-9 w-9 items-center justify-center">
-                    <AppLogoIcon
-                        class="size-9 fill-current text-black dark:text-white"
+                <div class="flex h-12 w-12 items-center justify-center">
+                    <img
+                        src="/images/HRNexusLogo.png"
+                        alt="HRNexus Logo"
+                        class="h-full w-full object-contain"
                     />
                 </div>
+                <span class="text-2xl font-semibold">HRNexus</span>
             </Link>
 
             <div class="flex flex-col gap-6">

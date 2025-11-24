@@ -5,18 +5,21 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\SoftDeletes;
 
 class DocumentAccessRequest extends Model
 {
-    use HasFactory;
+    use HasFactory, SoftDeletes;
 
     protected $fillable = [
         'user_id',
         'document_id',
         'status',
         'requested_at',
+        'request_message',
         'reviewed_at',
         'reviewed_by',
+        'review_message',
     ];
 
     public function requester(): BelongsTo
@@ -32,5 +35,14 @@ class DocumentAccessRequest extends Model
     public function document(): BelongsTo
     {
         return $this->belongsTo(Document::class);
+    }
+
+    protected function casts(): array
+    {
+        return [
+            'requested_at' => 'datetime',
+            'reviewed_at' => 'datetime',
+            'deleted_at' => 'datetime',
+        ];
     }
 }

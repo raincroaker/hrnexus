@@ -93,7 +93,12 @@ class DatabaseSeeder extends Seeder
             ChatSeeder::class,
         ]);
 
-        $this->command->info('Users, attendance settings, attendance records, biometric logs, and calendar events seeded successfully!');
+        // 6️⃣ Seed tags only (documents are not seeded)
+        $this->call([
+            TagSeeder::class,
+        ]);
+
+        $this->command->info('Users, attendance settings, attendance records, biometric logs, calendar events, and tags seeded successfully!');
     }
 
     private function createEmployee(array $data): void

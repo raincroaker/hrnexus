@@ -95,10 +95,10 @@ class ChatSeeder extends Seeder
             'message_type' => 'system',
         ]);
 
-        // Welcome message from admin (with formatting examples)
+        // Welcome message from admin (role-based, professional tone)
         $welcomeMessages = [
-            "Hello everyone! *Welcome* to the Everyone group! 👋\n\nThis is our main communication channel for company-wide updates and discussions.\n\nFeel free to share ideas, ask questions, or just say _hello_! We're all here to support each other.\n\nLet's make this a great place to collaborate! 🚀",
-            "Hi team! *Welcome* to our Everyone group! 🎉\n\nThis space is for:\n- Company-wide announcements\n- General discussions\n- Team updates\n- _Collaboration_ and support\n\nLooking forward to great conversations with all of you! 💬",
+            "Good morning team. This is the company-wide communication channel for official announcements, policy updates, and organization-wide information.\n\nPlease use this space for:\n- Company-wide announcements\n- Policy and procedure updates\n- Important organizational communications\n- Cross-departmental coordination\n\nAll members are expected to maintain professionalism in all communications. For department-specific matters, please use your respective department channels.",
+            "Welcome to the Everyone group. This channel serves as the primary platform for company-wide communications and official announcements.\n\nThis space is designated for:\n- Organizational announcements\n- Policy updates and changes\n- Company-wide initiatives\n- Important cross-functional communications\n\nPlease ensure all communications remain professional and aligned with company standards. Department-specific discussions should be conducted in your respective department channels.",
         ];
 
         Message::create([
@@ -194,11 +194,11 @@ class ChatSeeder extends Seeder
                 'message_type' => 'system',
             ]);
 
-            // Welcome message from dept manager (with formatting examples)
+            // Welcome message from dept manager (role-based, professional tone)
             $welcomeMessages = [
-                "Hello *{$department->name}* team! Welcome to our department chat! 👋\n\nThis is our space for:\n- Department updates\n- Team discussions\n- _Collaboration_ on projects\n- Sharing ideas and feedback\n\nLet's work together to achieve great things! 🚀",
-                "Hi everyone! *Welcome* to the {$department->name} group! 🎉\n\nI'm excited to have you all here. This chat is for:\n- Daily updates and check-ins\n- Project discussions\n- _Team_ coordination\n- Support and help\n\nLooking forward to productive conversations! 💬",
-                "Welcome to the *{$department->name}* chat, team! 👋\n\nThis is where we'll:\n- Share important updates\n- Coordinate on tasks\n- _Collaborate_ effectively\n- Support each other\n\nLet's make this a great communication channel! 🌟",
+                "Good morning {$department->name} team. This department channel is established for official department communications, project coordination, and team updates.\n\nThis channel is designated for:\n- Department-specific announcements\n- Project updates and coordination\n- Team task assignments\n- Department policy and procedure communications\n\nPlease maintain a professional tone in all communications. For urgent matters, please contact me directly.",
+                "Welcome to the {$department->name} department channel. This space is reserved for official department communications and operational coordination.\n\nThis channel serves the following purposes:\n- Department announcements and updates\n- Project status and coordination\n- Team task management\n- Department-specific policy communications\n\nAll team members are expected to maintain professionalism and respond to communications in a timely manner.",
+                "This is the {$department->name} department communication channel. This platform is designated for official department business and team coordination.\n\nUse this channel for:\n- Department-wide announcements\n- Project coordination and updates\n- Task assignments and status updates\n- Department policy and procedure matters\n\nPlease ensure all communications are professional and relevant to department operations.",
             ];
 
             Message::create([

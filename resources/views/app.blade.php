@@ -34,15 +34,40 @@
 
         <meta name="csrf-token" content="{{ csrf_token() }}">
 
-        <link rel="icon" href="/favicon.ico" sizes="any">
-        <link rel="icon" href="/favicon.svg" type="image/svg+xml">
-        <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+        {{-- PWA Meta Tags --}}
+        <meta name="application-name" content="HRNexus">
+        <meta name="apple-mobile-web-app-capable" content="yes">
+        <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+        <meta name="apple-mobile-web-app-title" content="HRNexus">
+        <meta name="description" content="HRNexus - Human Resources Management System">
+        <meta name="mobile-web-app-capable" content="yes">
+        <meta name="theme-color" content="#000000">
+
+        {{-- Icons --}}
+        <link rel="icon" href="/images/HRNexusLogo.png" type="image/png">
+        <link rel="apple-touch-icon" href="/images/HRNexusLogo.png">
+        <link rel="manifest" href="/manifest.json">
 
         <link rel="preconnect" href="https://fonts.bunny.net">
         <link href="https://fonts.bunny.net/css?family=instrument-sans:400,500,600" rel="stylesheet" />
 
         @vite(['resources/js/app.ts', "resources/js/pages/{$page['component']}.vue"])
         @inertiaHead
+
+        {{-- Service Worker Registration --}}
+        <script>
+            if ('serviceWorker' in navigator) {
+                window.addEventListener('load', () => {
+                    navigator.serviceWorker.register('/sw.js')
+                        .then((registration) => {
+                            console.log('SW registered: ', registration);
+                        })
+                        .catch((registrationError) => {
+                            console.log('SW registration failed: ', registrationError);
+                        });
+                });
+            }
+        </script>
     </head>
     <body class="font-sans antialiased">
         @inertia

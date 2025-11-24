@@ -28,40 +28,63 @@ class AttendanceSeeder extends Seeder
             return;
         }
 
-        $dates = $this->generateDateRange(5);
+        // Use Nov 24, 2025 as today's date
+        $today = Carbon::create(2025, 11, 24)->startOfDay();
+        $dates = $this->generateDateRange(5, $today);
         $requiredIn = Carbon::parse($setting->required_time_in);
         $requiredOut = Carbon::parse($setting->required_time_out);
 
         foreach ($employees as $employee) {
             foreach ($dates as $date) {
+                $isToday = $date->isSameDay($today);
                 $scenarioRoll = rand(1, 100);
-                $timeIn = (clone $requiredIn)->addMinutes(rand(-20, 40));
-                $timeOut = (clone $requiredOut)->subMinutes(rand(0, 30));
-                $hasTimeIn = true;
-                $hasTimeOut = true;
-                $status = 'Present';
-                $remarks = 'Complete';
+                $timeIn = null;
+                $timeOut = null;
+                $hasTimeIn = false;
+                $hasTimeOut = false;
+                $status = 'Incomplete';
+                $remarks = 'Missing Time In & Time Out';
 
-                if ($scenarioRoll <= 15) {
-                    $hasTimeIn = false;
-                    $status = 'Incomplete';
-                    $remarks = 'Missing Time In';
-                } elseif ($scenarioRoll <= 30) {
+                // For today's date: all employees should have time_in but no time_out
+                if ($isToday) {
+                    $hasTimeIn = true;
                     $hasTimeOut = false;
-                    $status = 'Incomplete';
+                    // Mix of on-time and late arrivals
+                    $timeInOffset = rand(1, 100) <= 70 ? rand(-10, 10) : rand(15, 45); // 70% on-time, 30% late
+                    $timeIn = (clone $requiredIn)->setDateFrom($date)->addMinutes($timeInOffset);
+                    $status = $timeIn->greaterThan((clone $requiredIn)->setDateFrom($date)->addMinutes(15)) ? 'Late' : 'Incomplete';
                     $remarks = 'Missing Time Out';
                 } else {
-                    if ($timeIn->greaterThan((clone $requiredIn)->addMinutes(15))) {
-                        $status = 'Late';
+                    // For past dates: normal scenarios
+                    $timeIn = (clone $requiredIn)->setDateFrom($date)->addMinutes(rand(-20, 40));
+                    $timeOut = (clone $requiredOut)->setDateFrom($date)->subMinutes(rand(0, 30));
+                    $hasTimeIn = true;
+                    $hasTimeOut = true;
+
+                    if ($scenarioRoll <= 15) {
+                        $hasTimeIn = false;
+                        $status = 'Incomplete';
+                        $remarks = 'Missing Time In';
+                    } elseif ($scenarioRoll <= 30) {
+                        $hasTimeOut = false;
+                        $status = 'Incomplete';
+                        $remarks = 'Missing Time Out';
+                    } else {
+                        if ($timeIn->greaterThan((clone $requiredIn)->setDateFrom($date)->addMinutes(15))) {
+                            $status = 'Late';
+                        } else {
+                            $status = 'Present';
+                        }
+                        $remarks = 'Complete';
                     }
-                }
 
-                if (! $hasTimeIn) {
-                    $timeIn = null;
-                }
+                    if (! $hasTimeIn) {
+                        $timeIn = null;
+                    }
 
-                if (! $hasTimeOut) {
-                    $timeOut = null;
+                    if (! $hasTimeOut) {
+                        $timeOut = null;
+                    }
                 }
 
                 $totalHours = null;
@@ -96,9 +119,9 @@ class AttendanceSeeder extends Seeder
     /**
      * @return Collection<int, Carbon>
      */
-    private function generateDateRange(int $days): Collection
+    private function generateDateRange(int $days, Carbon $baseDate): Collection
     {
         return collect(range(0, $days - 1))
-            ->map(fn (int $offset) => now()->subDays($offset)->startOfDay());
+            ->map(fn (int $offset) => (clone $baseDate)->subDays($offset)->startOfDay());
     }
 }

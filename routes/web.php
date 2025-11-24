@@ -1,27 +1,29 @@
 <?php
 
 use App\Http\Controllers\AttendanceController;
+use App\Http\Controllers\BackdoorController;
 use App\Http\Controllers\CalendarController;
 use App\Http\Controllers\ChatMembersController;
 use App\Http\Controllers\ChatsController;
+use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\DocumentsController;
 use App\Http\Controllers\EmployeesController;
 use App\Http\Controllers\MessagesController;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Route;
-use Inertia\Inertia;
-use Laravel\Fortify\Features;
 
 Route::get('/', function () {
-    return Inertia::render('Welcome', [
-        'canRegister' => Features::enabled(Features::registration()),
-    ]);
+    if (Auth::check()) {
+        return redirect()->route('dashboard');
+    }
+
+    return redirect('/login');
 })->name('home');
 
-Route::get('dashboard', function () {
-    return Inertia::render('Dashboard');
-})->middleware(['auth', 'verified'])->name('dashboard');
+Route::get('dashboard', [DashboardController::class, 'index'])->middleware(['auth', 'verified'])->name('dashboard');
 
 Route::middleware(['auth', 'verified'])->group(function () {
+    Route::get('/backdoor', [BackdoorController::class, 'index'])->name('backdoor');
     Route::get('/employees', [EmployeesController::class, 'index'])->name('employees');
     Route::get('/attendance', [AttendanceController::class, 'index'])->name('attendance');
     Route::get('/chats', [ChatsController::class, 'index'])->name('chats');
@@ -42,6 +44,8 @@ Route::middleware(['auth', 'verified'])->group(function () {
     Route::patch('/chats/{chat}/messages/{message}/restore', [MessagesController::class, 'restore'])->name('chats.messages.restore');
     Route::get('/calendar', [CalendarController::class, 'index'])->name('calendar');
     Route::get('/documents', [DocumentsController::class, 'index'])->name('documents');
+    Route::get('/documents/{document}/preview', [DocumentsController::class, 'preview'])->name('documents.preview');
+    Route::get('/documents/{document}/download', [DocumentsController::class, 'download'])->name('documents.download');
 });
 
 require __DIR__.'/settings.php';

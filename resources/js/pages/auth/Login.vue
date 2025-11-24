@@ -1,16 +1,26 @@
 <script setup lang="ts">
+import { ref } from 'vue';
 import InputError from '@/components/InputError.vue';
-import TextLink from '@/components/TextLink.vue';
+import {
+    AlertDialog,
+    AlertDialogAction,
+    AlertDialogCancel,
+    AlertDialogContent,
+    AlertDialogDescription,
+    AlertDialogFooter,
+    AlertDialogHeader,
+    AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import AuthBase from '@/layouts/AuthLayout.vue';
-import { register } from '@/routes';
 import { store } from '@/routes/login';
-import { request } from '@/routes/password';
 import { Form, Head } from '@inertiajs/vue3';
 import { LoaderCircle } from 'lucide-vue-next';
+
+const showTermsDialog = ref(false);
 
 defineProps<{
     status?: string;
@@ -21,7 +31,6 @@ defineProps<{
 
 <template>
     <AuthBase
-        title="Log in to your account"
         description="Enter your email and password below to log in"
     >
         <Head title="Log in" />
@@ -56,17 +65,7 @@ defineProps<{
                 </div>
 
                 <div class="grid gap-2">
-                    <div class="flex items-center justify-between">
-                        <Label for="password">Password</Label>
-                        <TextLink
-                            v-if="canResetPassword"
-                            :href="request()"
-                            class="text-sm"
-                            :tabindex="5"
-                        >
-                            Forgot password?
-                        </TextLink>
-                    </div>
+                    <Label for="password">Password</Label>
                     <Input
                         id="password"
                         type="password"
@@ -99,15 +98,46 @@ defineProps<{
                     />
                     Log in
                 </Button>
+
+                <div class="text-center text-xs text-muted-foreground">
+                    By logging in, you agree to our
+                    <button
+                        type="button"
+                        @click="showTermsDialog = true"
+                        class="text-primary underline hover:text-primary/80 focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 rounded px-0.5"
+                    >
+                        Terms and Conditions
+                    </button>
+                </div>
             </div>
 
-            <div
-                class="text-center text-sm text-muted-foreground"
-                v-if="canRegister"
-            >
-                Don't have an account?
-                <TextLink :href="register()" :tabindex="5">Sign up</TextLink>
-            </div>
         </Form>
+
+        <!-- Terms and Conditions Dialog -->
+        <AlertDialog v-model:open="showTermsDialog">
+            <AlertDialogContent class="max-w-md">
+                <AlertDialogHeader>
+                    <AlertDialogTitle>Terms and Conditions</AlertDialogTitle>
+                    <AlertDialogDescription class="text-left space-y-3 pt-2">
+                        <p class="font-semibold text-foreground">By accessing and using HRNexus, you agree to the following terms:</p>
+                        
+                        <div class="space-y-2 text-sm">
+                            <p><strong>1. Account Responsibility:</strong> You are responsible for maintaining the confidentiality of your account credentials and for all activities that occur under your account.</p>
+                            
+                            <p><strong>2. Acceptable Use:</strong> You agree to use the system only for legitimate business purposes and in accordance with company policies. Unauthorized access, data manipulation, or misuse is strictly prohibited.</p>
+                            
+                            <p><strong>3. Data Privacy:</strong> Your personal and professional data will be handled in accordance with our privacy policy. Sensitive information is protected and access is restricted to authorized personnel only.</p>
+                            
+                            <p><strong>4. System Access:</strong> Access to HRNexus is granted based on your role and department. Sharing credentials or attempting to access unauthorized areas is prohibited.</p>
+                            
+                            <p><strong>5. Compliance:</strong> You must comply with all applicable laws, regulations, and company policies while using this system.</p>
+                        </div>
+                    </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                    <AlertDialogCancel>Close</AlertDialogCancel>
+                </AlertDialogFooter>
+            </AlertDialogContent>
+        </AlertDialog>
     </AuthBase>
 </template>
