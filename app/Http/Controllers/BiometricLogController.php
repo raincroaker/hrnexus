@@ -7,6 +7,7 @@ use App\Models\Attendance;
 use App\Models\AttendanceSetting;
 use App\Models\BiometricLog;
 use App\Models\Employee;
+use App\Models\EmployeeLeave;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Response;
 use Illuminate\Support\Carbon;
@@ -14,15 +15,9 @@ use Illuminate\Support\Facades\DB;
 
 class BiometricLogController extends Controller
 {
-    private const TIME_IN_START_HOUR = 6;
+    private const WINDOW_START_HOUR = 6;
 
-    private const TIME_IN_END_HOUR = 12;
-
-    private const TIME_OUT_START_HOUR = 12;
-
-    private const TIME_OUT_START_MINUTE = 1;
-
-    private const TIME_OUT_END_HOUR = 19;
+    private const WINDOW_END_HOUR = 20;
 
     public function store(StoreBiometricLogRequest $request): JsonResponse
     {
@@ -38,7 +33,7 @@ class BiometricLogController extends Controller
 
         if ($window === null) {
             return response()->json([
-                'message' => 'Scan falls outside the supported time windows (06:00-12:00 for time in, 12:01-19:00 for time out).',
+                'message' => 'Scan falls outside the supported time window (06:00-20:00).',
             ], Response::HTTP_UNPROCESSABLE_ENTITY);
         }
 
@@ -71,7 +66,6 @@ class BiometricLogController extends Controller
             &$attendanceData,
             $data,
             $scanDateTime,
-            $window,
             $employee,
             $attendanceSetting
         ) {
@@ -88,7 +82,7 @@ class BiometricLogController extends Controller
             $attendance->employee()->associate($employee);
 
             // Pass the employee_code to applyScanToAttendance so it can query correctly
-            $this->applyScanToAttendance($attendance, $scanDateTime, $window, $employee->employee_code);
+            $this->applyScanToAttendance($attendance, $scanDateTime, $employee->employee_code);
             $this->updateAttendanceSummary($attendance, $attendanceSetting);
 
             $attendance->save();
@@ -106,95 +100,60 @@ class BiometricLogController extends Controller
 
     private function resolveWindow(Carbon $scanTime): ?string
     {
-        $timeInStart = $scanTime->copy()->setTime(self::TIME_IN_START_HOUR, 0);
-        $timeInEnd = $scanTime->copy()->setTime(self::TIME_IN_END_HOUR, 0);
-        $timeOutStart = $scanTime->copy()->setTime(self::TIME_OUT_START_HOUR, self::TIME_OUT_START_MINUTE);
-        $timeOutEnd = $scanTime->copy()->setTime(self::TIME_OUT_END_HOUR, 0);
+        $windowStart = $scanTime->copy()->setTime(self::WINDOW_START_HOUR, 0);
+        $windowEnd = $scanTime->copy()->setTime(self::WINDOW_END_HOUR, 0);
 
-        if ($scanTime->betweenIncluded($timeInStart, $timeInEnd)) {
-            return 'in';
-        }
-
-        if ($scanTime->betweenIncluded($timeOutStart, $timeOutEnd)) {
-            return 'out';
+        if ($scanTime->betweenIncluded($windowStart, $windowEnd)) {
+            return 'window';
         }
 
         return null;
     }
 
-    private function applyScanToAttendance(Attendance $attendance, Carbon $scanTime, string $window, string $employeeCode): void
+    private function applyScanToAttendance(Attendance $attendance, Carbon $scanTime, string $employeeCode): void
     {
-        if (! $attendance->exists) {
-            $attendance->status = 'Incomplete';
-            $attendance->remarks = 'Missing Time In & Time Out';
+        // Don't set status here - it will be determined in updateAttendanceSummary()
+
+        $windowStart = $scanTime->copy()->setTime(self::WINDOW_START_HOUR, 0);
+        $windowEnd = $scanTime->copy()->setTime(self::WINDOW_END_HOUR, 0);
+
+        $earliestBiometricScan = BiometricLog::query()
+            ->where('employee_code', $employeeCode)
+            ->whereDate('scan_time', $scanTime->toDateString())
+            ->whereBetween('scan_time', [$windowStart, $windowEnd])
+            ->orderBy('scan_time', 'asc')
+            ->first();
+
+        $latestBiometricScan = BiometricLog::query()
+            ->where('employee_code', $employeeCode)
+            ->whereDate('scan_time', $scanTime->toDateString())
+            ->whereBetween('scan_time', [$windowStart, $windowEnd])
+            ->orderBy('scan_time', 'desc')
+            ->first();
+
+        if ($earliestBiometricScan) {
+            $earliestTime = $earliestBiometricScan->scan_time instanceof Carbon
+                ? $earliestBiometricScan->scan_time
+                : Carbon::parse($earliestBiometricScan->scan_time);
+
+            $attendance->time_in = $earliestTime->format('H:i:s');
         }
 
-        if ($window === 'in') {
-            // Find the earliest scan from all biometric logs for this date (including the one just added)
-            $timeInStart = $scanTime->copy()->setTime(self::TIME_IN_START_HOUR, 0);
-            $timeInEnd = $scanTime->copy()->setTime(self::TIME_IN_END_HOUR, 0);
+        if ($earliestBiometricScan && $latestBiometricScan) {
+            $earliestTime = $earliestBiometricScan->scan_time instanceof Carbon
+                ? $earliestBiometricScan->scan_time
+                : Carbon::parse($earliestBiometricScan->scan_time);
+            $latestTime = $latestBiometricScan->scan_time instanceof Carbon
+                ? $latestBiometricScan->scan_time
+                : Carbon::parse($latestBiometricScan->scan_time);
 
-            $earliestBiometricScan = BiometricLog::query()
-                ->where('employee_code', $employeeCode)
-                ->whereDate('scan_time', $scanTime->toDateString())
-                ->whereBetween('scan_time', [$timeInStart, $timeInEnd])
-                ->orderBy('scan_time', 'asc')
-                ->first();
-
-            if ($earliestBiometricScan) {
-                $earliestTime = $earliestBiometricScan->scan_time instanceof Carbon
-                    ? $earliestBiometricScan->scan_time
-                    : Carbon::parse($earliestBiometricScan->scan_time);
-
-                // Only update if the earliest biometric scan is earlier than current attendance time_in
-                // Or if attendance has no time_in
-                // This respects manually added attendance if it's already the earliest
-                if (! $attendance->time_in) {
-                    $attendance->time_in = $earliestTime->format('H:i:s');
-                } else {
-                    // Compare time portions only
-                    $earliestTimeOnly = Carbon::createFromFormat('H:i:s', $earliestTime->format('H:i:s'));
-                    $currentTimeOnly = Carbon::createFromFormat('H:i:s', $attendance->time_in);
-
-                    if ($earliestTimeOnly->lt($currentTimeOnly)) {
-                        $attendance->time_in = $earliestTime->format('H:i:s');
-                    }
-                }
+            if ($latestTime->gt($earliestTime)) {
+                $attendance->time_out = $latestTime->format('H:i:s');
+            } else {
+                $attendance->time_out = null;
             }
-        }
-
-        if ($window === 'out') {
-            // Find the latest scan from all biometric logs for this date (including the one just added)
-            $timeOutStart = $scanTime->copy()->setTime(self::TIME_OUT_START_HOUR, self::TIME_OUT_START_MINUTE);
-            $timeOutEnd = $scanTime->copy()->setTime(self::TIME_OUT_END_HOUR, 0);
-
-            $latestBiometricScan = BiometricLog::query()
-                ->where('employee_code', $employeeCode)
-                ->whereDate('scan_time', $scanTime->toDateString())
-                ->whereBetween('scan_time', [$timeOutStart, $timeOutEnd])
-                ->orderBy('scan_time', 'desc')
-                ->first();
-
-            if ($latestBiometricScan) {
-                $latestTime = $latestBiometricScan->scan_time instanceof Carbon
-                    ? $latestBiometricScan->scan_time
-                    : Carbon::parse($latestBiometricScan->scan_time);
-
-                // Only update if the latest biometric scan is later than current attendance time_out
-                // Or if attendance has no time_out
-                // This respects manually added attendance if it's already the latest
-                if (! $attendance->time_out) {
-                    $attendance->time_out = $latestTime->format('H:i:s');
-                } else {
-                    // Compare time portions only
-                    $latestTimeOnly = Carbon::createFromFormat('H:i:s', $latestTime->format('H:i:s'));
-                    $currentTimeOnly = Carbon::createFromFormat('H:i:s', $attendance->time_out);
-
-                    if ($latestTimeOnly->gt($currentTimeOnly)) {
-                        $attendance->time_out = $latestTime->format('H:i:s');
-                    }
-                }
-            }
+        } else {
+            $attendance->time_out = null;
         }
     }
 
@@ -217,7 +176,8 @@ class BiometricLogController extends Controller
         }
 
         if ($timeIn) {
-            $attendance->status = 'Incomplete';
+            // Only time_in exists - determine if Present or Late based on time_in
+            $attendance->status = $timeIn->greaterThan($requiredTimeIn) ? 'Late' : 'Present';
             $attendance->remarks = 'Missing Time Out';
             $attendance->total_hours = null;
 
@@ -225,15 +185,28 @@ class BiometricLogController extends Controller
         }
 
         if ($timeOut) {
-            $attendance->status = 'Incomplete';
+            // Only time_out exists - can't determine if late without time_in, default to Present
+            $attendance->status = 'Present';
             $attendance->remarks = 'Missing Time In';
             $attendance->total_hours = null;
 
             return;
         }
 
-        $attendance->status = 'Incomplete';
-        $attendance->remarks = 'Missing Time In & Time Out';
+        // Neither time_in nor time_out exists - check leave first, else Absent
+        $employeeLeave = EmployeeLeave::query()
+            ->where('employee_id', $attendance->employee_id)
+            ->whereDate('date', $attendance->date)
+            ->first();
+
+        if ($employeeLeave) {
+            $attendance->status = 'Leave';
+            $attendance->remarks = 'On leave';
+            $attendance->employee_leave_id = $employeeLeave->id;
+        } else {
+            $attendance->status = 'Absent';
+            $attendance->remarks = 'Missing Time In & Time Out';
+        }
         $attendance->total_hours = null;
     }
 
@@ -296,8 +269,9 @@ class BiometricLogController extends Controller
             ? $biometricLog->scan_time
             : Carbon::parse($biometricLog->scan_time);
 
-        $window = $this->resolveWindow($scanTime);
         $attendanceData = null;
+
+        $window = $this->resolveWindow($scanTime);
 
         DB::transaction(function () use ($biometricLog, $scanTime, $window, &$attendanceData) {
             // Find employee by employee_code
@@ -313,99 +287,42 @@ class BiometricLogController extends Controller
                     ->first();
 
                 if ($attendance) {
-                    $attendanceTimeIn = $attendance->time_in
-                        ? Carbon::createFromFormat('H:i:s', $attendance->time_in)
-                        : null;
-                    $attendanceTimeOut = $attendance->time_out
-                        ? Carbon::createFromFormat('H:i:s', $attendance->time_out)
-                        : null;
+                    if ($window === 'window') {
+                        $windowStart = $scanTime->copy()->setTime(self::WINDOW_START_HOUR, 0);
+                        $windowEnd = $scanTime->copy()->setTime(self::WINDOW_END_HOUR, 0);
 
-                    // Compare time portions only (HH:mm:ss)
-                    $scanTimeFormatted = $scanTime->format('H:i:s');
-                    $matchesTimeIn = $attendanceTimeIn && $scanTimeFormatted === $attendanceTimeIn->format('H:i:s');
-                    $matchesTimeOut = $attendanceTimeOut && $scanTimeFormatted === $attendanceTimeOut->format('H:i:s');
+                        $remainingScans = BiometricLog::query()
+                            ->where('employee_code', $biometricLog->employee_code)
+                            ->whereDate('scan_time', $scanTime->toDateString())
+                            ->where('id', '!=', $biometricLog->id)
+                            ->whereBetween('scan_time', [$windowStart, $windowEnd])
+                            ->orderBy('scan_time')
+                            ->get();
 
-                    if ($matchesTimeIn || $matchesTimeOut) {
-                        // This scan is being used in attendance, need to check if we should update
-                        $shouldUpdate = false;
+                        if ($remainingScans->isNotEmpty()) {
+                            $earliest = $remainingScans->first()->scan_time instanceof Carbon
+                                ? $remainingScans->first()->scan_time
+                                : Carbon::parse($remainingScans->first()->scan_time);
+                            $latest = $remainingScans->last()->scan_time instanceof Carbon
+                                ? $remainingScans->last()->scan_time
+                                : Carbon::parse($remainingScans->last()->scan_time);
 
-                        if ($window === 'in' && $matchesTimeIn) {
-                            // Find other scans in time_in window (06:00-12:00)
-                            $timeInStart = $scanTime->copy()->setTime(self::TIME_IN_START_HOUR, 0);
-                            $timeInEnd = $scanTime->copy()->setTime(self::TIME_IN_END_HOUR, 0);
-
-                            $otherScan = BiometricLog::query()
-                                ->where('employee_code', $biometricLog->employee_code)
-                                ->whereDate('scan_time', $scanTime->toDateString())
-                                ->where('id', '!=', $biometricLog->id)
-                                ->whereBetween('scan_time', [$timeInStart, $timeInEnd])
-                                ->orderBy('scan_time', 'asc')
-                                ->first();
-
-                            if ($otherScan) {
-                                // Check if the remaining earliest scan is different from current attendance time
-                                $earliestRemainingTime = $otherScan->scan_time instanceof Carbon
-                                    ? $otherScan->scan_time
-                                    : Carbon::parse($otherScan->scan_time);
-
-                                // Only update if the remaining earliest is different from current attendance
-                                // This means if manually added attendance is already the earliest, don't touch it
-                                if ($earliestRemainingTime->format('H:i:s') !== $attendanceTimeIn->format('H:i:s')) {
-                                    $attendance->time_in = $earliestRemainingTime->format('H:i:s');
-                                    $shouldUpdate = true;
-                                }
-                            } else {
-                                // No other biometric scans in this window
-                                // Since the deleted scan matched the attendance time, set it to null
-                                $attendance->time_in = null;
-                                $shouldUpdate = true;
-                            }
+                            $attendance->time_in = $earliest->format('H:i:s');
+                            $attendance->time_out = $latest->gt($earliest)
+                                ? $latest->format('H:i:s')
+                                : null;
+                        } else {
+                            $attendance->time_in = null;
+                            $attendance->time_out = null;
                         }
 
-                        if ($window === 'out' && $matchesTimeOut) {
-                            // Find other scans in time_out window (12:01-19:00)
-                            $timeOutStart = $scanTime->copy()->setTime(self::TIME_OUT_START_HOUR, self::TIME_OUT_START_MINUTE);
-                            $timeOutEnd = $scanTime->copy()->setTime(self::TIME_OUT_END_HOUR, 0);
+                        $attendanceSetting = AttendanceSetting::query()->latest()->first()
+                            ?? new AttendanceSetting(AttendanceSetting::defaultValues());
+                        $attendanceSetting->break_is_counted = (bool) $attendanceSetting->break_is_counted;
 
-                            $otherScan = BiometricLog::query()
-                                ->where('employee_code', $biometricLog->employee_code)
-                                ->whereDate('scan_time', $scanTime->toDateString())
-                                ->where('id', '!=', $biometricLog->id)
-                                ->whereBetween('scan_time', [$timeOutStart, $timeOutEnd])
-                                ->orderBy('scan_time', 'desc')
-                                ->first();
-
-                            if ($otherScan) {
-                                // Check if the remaining latest scan is different from current attendance time
-                                $latestRemainingTime = $otherScan->scan_time instanceof Carbon
-                                    ? $otherScan->scan_time
-                                    : Carbon::parse($otherScan->scan_time);
-
-                                // Only update if the remaining latest is different from current attendance
-                                // This means if manually added attendance is already the latest, don't touch it
-                                if ($latestRemainingTime->format('H:i:s') !== $attendanceTimeOut->format('H:i:s')) {
-                                    $attendance->time_out = $latestRemainingTime->format('H:i:s');
-                                    $shouldUpdate = true;
-                                }
-                            } else {
-                                // No other biometric scans in this window
-                                // Since the deleted scan matched the attendance time, set it to null
-                                $attendance->time_out = null;
-                                $shouldUpdate = true;
-                            }
-                        }
-
-                        // Only recalculate and save if we actually updated something
-                        if ($shouldUpdate) {
-                            $attendanceSetting = AttendanceSetting::query()->latest()->first()
-                                ?? new AttendanceSetting(AttendanceSetting::defaultValues());
-                            $attendanceSetting->break_is_counted = (bool) $attendanceSetting->break_is_counted;
-
-                            $this->updateAttendanceSummary($attendance, $attendanceSetting);
-                            $attendance->save();
-
-                            $attendanceData = $this->transformAttendance($attendance);
-                        }
+                        $this->updateAttendanceSummary($attendance, $attendanceSetting);
+                        $attendance->save();
+                        $attendanceData = $this->transformAttendance($attendance);
                     }
                 }
             }

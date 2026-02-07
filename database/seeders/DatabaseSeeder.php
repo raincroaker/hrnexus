@@ -6,11 +6,19 @@ use App\Models\Department;
 use App\Models\Employee;
 use App\Models\Position;
 use App\Models\User;
+use Faker\Factory;
 use Illuminate\Database\Seeder;
 
 class DatabaseSeeder extends Seeder
 {
     private int $employeeCounter = 1;
+
+    private $faker;
+
+    public function __construct()
+    {
+        $this->faker = Factory::create();
+    }
 
     public function run(): void
     {
@@ -48,8 +56,8 @@ class DatabaseSeeder extends Seeder
 
             // Create 1 department manager per department
             $managerPosition = $positions->where('name', 'like', '%Manager%')->first() ?? $positions->first();
-            $managerFirstName = fake()->firstName();
-            $managerLastName = fake()->lastName();
+            $managerFirstName = $this->faker->firstName();
+            $managerLastName = $this->faker->lastName();
             $this->createEmployee([
                 'first_name' => $managerFirstName,
                 'last_name' => $managerLastName,
@@ -64,8 +72,8 @@ class DatabaseSeeder extends Seeder
             for ($i = 0; $i < $employeeCount; $i++) {
                 // Randomly assign a position (can duplicate)
                 $randomPosition = $positions->random();
-                $employeeFirstName = fake()->firstName();
-                $employeeLastName = fake()->lastName();
+                $employeeFirstName = $this->faker->firstName();
+                $employeeLastName = $this->faker->lastName();
 
                 $this->createEmployee([
                     'first_name' => $employeeFirstName,
@@ -80,9 +88,11 @@ class DatabaseSeeder extends Seeder
 
         // 4️⃣ Seed attendance configuration and records
         $this->call([
+            LeaveTypeSeeder::class,
+            HolidaySeeder::class,
             AttendanceSettingSeeder::class,
+            EmployeeLeavesSeeder::class,
             AttendanceSeeder::class,
-            BiometricLogSeeder::class,
         ]);
 
         // 5️⃣ Seed calendar events
@@ -113,8 +123,8 @@ class DatabaseSeeder extends Seeder
             'role' => $data['role'],
             'department_id' => $data['department_id'],
             'position_id' => $data['position_id'],
-            'contact_number' => fake()->phoneNumber(),
-            'birth_date' => fake()->date('Y-m-d', '-25 years'),
+            'contact_number' => $this->faker->phoneNumber(),
+            'birth_date' => $this->faker->date('Y-m-d', '-25 years'),
             'avatar' => null,
         ]);
 

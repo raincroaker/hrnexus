@@ -30,32 +30,26 @@ class BiometricLogSeeder extends Seeder
 
             $employeeCodes->push($employee->employee_code);
 
-            if ($attendance->time_in) {
-                $this->createBiometricLog(
-                    $employee->employee_code,
-                    Carbon::parse($attendance->date.' '.$attendance->time_in)
-                );
-            }
+            // Only seed logs for Present/Late (skip Absent/Leave/Holiday)
+            if (in_array($attendance->status, ['Present', 'Late'], true)) {
+                if ($attendance->time_in) {
+                    $this->createBiometricLog(
+                        $employee->employee_code,
+                        Carbon::parse($attendance->date.' '.$attendance->time_in)
+                    );
+                }
 
-            if ($attendance->time_out) {
-                $this->createBiometricLog(
-                    $employee->employee_code,
-                    Carbon::parse($attendance->date.' '.$attendance->time_out)
-                );
-            }
-
-            if ($attendance->time_in && $attendance->time_out) {
-                $timeIn = Carbon::parse($attendance->date.' '.$attendance->time_in);
-                $timeOut = Carbon::parse($attendance->date.' '.$attendance->time_out);
-                $midPoint = $timeIn->copy()->addMinutes(
-                    intdiv($timeIn->diffInMinutes($timeOut), 2)
-                );
-
-                $this->createBiometricLog($employee->employee_code, $midPoint);
+                if ($attendance->time_out) {
+                    $this->createBiometricLog(
+                        $employee->employee_code,
+                        Carbon::parse($attendance->date.' '.$attendance->time_out)
+                    );
+                }
             }
         }
 
-        $this->seedSyntheticEmployeeCodes($employeeCodes->unique()->values(), 10);
+        // Add extra biometric-only employees (on-time to avoid artificial lates)
+        $this->seedSyntheticEmployeeCodes($employeeCodes->unique()->values(), 5);
     }
 
     private function createBiometricLog(string $employeeCode, Carbon $scanTime): void
@@ -72,37 +66,25 @@ class BiometricLogSeeder extends Seeder
     private function seedSyntheticEmployeeCodes(\Illuminate\Support\Collection $existingCodes, int $additionalCount): void
     {
         $nextNumber = $this->resolveNextEmployeeNumber($existingCodes);
-        $dates = collect(range(0, 4))->map(fn (int $offset) => now()->subDays($offset)->startOfDay());
+        $start = Carbon::create(2026, 1, 1);
+        $end = Carbon::create(2026, 2, 2);
+
+        $dates = [];
+        $cursor = $start->copy();
+        while ($cursor->lte($end)) {
+            $dates[] = $cursor->copy();
+            $cursor->addDay();
+        }
 
         for ($i = 0; $i < $additionalCount; $i++) {
             $code = 'EMP'.str_pad((string) $nextNumber++, 4, '0', STR_PAD_LEFT);
 
             foreach ($dates as $date) {
-                $scenarioRoll = rand(1, 100);
-                $hasTimeIn = true;
-                $hasTimeOut = true;
+                $timeIn = $date->copy()->setTime(8, 0);
+                $timeOut = $date->copy()->setTime(17, 0);
 
-                if ($scenarioRoll <= 15) {
-                    $hasTimeIn = false;
-                } elseif ($scenarioRoll <= 30) {
-                    $hasTimeOut = false;
-                }
-
-                $timeIn = $date->copy()->setTime(8, rand(0, 30));
-                $timeOut = $date->copy()->setTime(17, rand(0, 30));
-
-                if ($hasTimeIn) {
-                    $this->createBiometricLog($code, $timeIn);
-                }
-
-                if ($hasTimeIn && $hasTimeOut && rand(0, 1)) {
-                    $midPoint = $timeIn->copy()->addMinutes(intdiv($timeIn->diffInMinutes($timeOut), 2));
-                    $this->createBiometricLog($code, $midPoint);
-                }
-
-                if ($hasTimeOut) {
-                    $this->createBiometricLog($code, $timeOut);
-                }
+                $this->createBiometricLog($code, $timeIn);
+                $this->createBiometricLog($code, $timeOut);
             }
         }
     }

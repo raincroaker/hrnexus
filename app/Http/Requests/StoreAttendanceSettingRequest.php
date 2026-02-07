@@ -26,6 +26,10 @@ class StoreAttendanceSettingRequest extends FormRequest
             'required_time_out' => ['required', 'date_format:H:i', 'after:required_time_in'],
             'break_duration_minutes' => ['required', 'integer', 'min:0'],
             'break_is_counted' => ['required', 'boolean'],
+            'late_threshold_warning' => ['sometimes', 'integer', 'min:0'],
+            'late_threshold_memo' => ['sometimes', 'integer', 'min:0'],
+            'absent_threshold_warning' => ['sometimes', 'integer', 'min:0'],
+            'absent_threshold_memo' => ['sometimes', 'integer', 'min:0'],
             'password' => ['required', 'current_password:web'],
         ];
     }

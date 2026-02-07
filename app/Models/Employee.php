@@ -51,4 +51,9 @@ class Employee extends Model
     {
         return $this->hasMany(BiometricLog::class, 'employee_code', 'employee_code');
     }
+
+    public function employeeOvertime(): HasMany
+    {
+        return $this->hasMany(EmployeeOvertime::class);
+    }
 }

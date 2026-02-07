@@ -38,6 +38,8 @@ class StoreDocumentRequest extends FormRequest
         $employee = Employee::where('email', $user->email)->first();
         $isAdmin = $employee && $employee->role === 'admin';
 
+        $requiresManualSummary = $this->requiresManualSummary();
+
         return [
             'file' => [
                 'required',
@@ -62,7 +64,22 @@ class StoreDocumentRequest extends FormRequest
                     }
                 },
             ],
-            'description' => ['nullable', 'string', 'max:5000'],
+            'description' => [
+                Rule::requiredIf($requiresManualSummary),
+                'nullable',
+                'string',
+                'min:'.($requiresManualSummary ? 20 : 0), // Min 20 chars for manual summary files
+                'max:5000',
+            ],
+            'manual_keywords' => [
+                Rule::requiredIf($requiresManualSummary),
+                'array',
+                'min:5',
+            ],
+            'manual_keywords.*' => [
+                'string',
+                'max:255',
+            ],
             'department_id' => [
                 Rule::requiredIf($isAdmin),
                 'nullable',
@@ -99,6 +116,44 @@ class StoreDocumentRequest extends FormRequest
             'accessibility.required' => 'Please select an access level.',
             'accessibility.in' => 'The access level must be Public, Private, or Department.',
             'tags.*.exists' => 'One or more selected tags are invalid.',
+            'description.required' => 'A summary/description is required for this file type.',
+            'description.min' => 'The summary/description must be at least :min characters.',
+            'manual_keywords.required' => 'At least 5 keywords are required for this file type.',
+            'manual_keywords.min' => 'Please add at least :min keywords.',
         ];
+    }
+
+    private function requiresManualSummary(): bool
+    {
+        $file = $this->file('file');
+
+        if (! $file) {
+            return false;
+        }
+
+        // Excel, Word, and PowerPoint files require manual summary
+        // OpenAI Chat API only supports PDF files for extraction
+        $manualMimeTypes = [
+            // Excel files
+            'application/vnd.ms-excel',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            // Word files
+            'application/msword',
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            // PowerPoint files
+            'application/vnd.ms-powerpoint',
+            'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+        ];
+
+        $manualExtensions = ['xls', 'xlsx', 'doc', 'docx', 'ppt', 'pptx'];
+
+        $mimeType = $file->getMimeType();
+        if (in_array($mimeType, $manualMimeTypes, true)) {
+            return true;
+        }
+
+        $extension = strtolower($file->getClientOriginalExtension());
+
+        return in_array($extension, $manualExtensions, true);
     }
 }

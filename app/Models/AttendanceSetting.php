@@ -23,6 +23,10 @@ class AttendanceSetting extends Model
         'required_time_out',
         'break_duration_minutes',
         'break_is_counted',
+        'late_threshold_warning',
+        'late_threshold_memo',
+        'absent_threshold_warning',
+        'absent_threshold_memo',
     ];
 
     /**
@@ -33,6 +37,10 @@ class AttendanceSetting extends Model
         return [
             'break_duration_minutes' => 'integer',
             'break_is_counted' => 'boolean',
+            'late_threshold_warning' => 'integer',
+            'late_threshold_memo' => 'integer',
+            'absent_threshold_warning' => 'integer',
+            'absent_threshold_memo' => 'integer',
         ];
     }
 

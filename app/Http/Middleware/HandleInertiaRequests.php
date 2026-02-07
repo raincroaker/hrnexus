@@ -3,10 +3,12 @@
 namespace App\Http\Middleware;
 
 use App\Models\Employee;
+use Closure;
 use Illuminate\Foundation\Inspiring;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
 use Inertia\Middleware;
+use Symfony\Component\HttpFoundation\Response;
 
 class HandleInertiaRequests extends Middleware
 {
@@ -27,6 +29,25 @@ class HandleInertiaRequests extends Middleware
     public function version(Request $request): ?string
     {
         return parent::version($request);
+    }
+
+    /**
+     * Handle an incoming request. Add no-cache headers for Inertia (XHR) responses
+     * so that navigation (clicking links) always fetches fresh data instead of
+     * serving a cached response. Without this, you may see "old" data until you
+     * do a full page reload (F5).
+     */
+    public function handle(Request $request, Closure $next): Response
+    {
+        $response = parent::handle($request, $next);
+
+        if ($request->header('X-Inertia')) {
+            $response->headers->set('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
+            $response->headers->set('Pragma', 'no-cache');
+            $response->headers->set('Expires', '0');
+        }
+
+        return $response;
     }
 
     /**

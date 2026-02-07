@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import AppLayout from '@/layouts/AppLayout.vue'
-import { Head } from '@inertiajs/vue3'
+import { Head, router } from '@inertiajs/vue3'
 import { type BreadcrumbItem } from '@/types'
 import api from '@/lib/axios'
 import { toast } from 'vue-sonner'
@@ -544,9 +544,11 @@ const openInNewTab = () => {
 // ============================================================================
 const smartSearchDialogOpen = ref(false)
 const smartSearchQuery = ref('')
-const smartSearchMode = ref<'keywords' | 'context'>('keywords')
 const smartSearchLoading = ref(false)
 const smartSearchResults = ref<any[]>([])
+// UI only: allow user to pick between Keyword vs Context search modes.
+// Both modes currently use the same underlying keyword search logic.
+const smartSearchMode = ref<'keywords' | 'context'>('keywords')
 
 watch(smartSearchDialogOpen, (isOpen) => {
   if (!isOpen) {
@@ -571,10 +573,12 @@ const performSmartSearch = async () => {
   smartSearchResults.value = []
 
   try {
+    // NOTE: Context search is not yet implemented. Both modes currently
+    // delegate to the same keyword-based search API for now.
     if (smartSearchMode.value === 'keywords') {
       await performKeywordSearch(query)
     } else {
-      await performContextualSearch(query)
+      await performKeywordSearch(query)
     }
   } finally {
     smartSearchLoading.value = false
@@ -615,38 +619,7 @@ const performKeywordSearch = async (query: string) => {
   }
 }
 
-/**
- * Perform contextual search using Meilisearch vector search
- */
-const performContextualSearch = async (query: string) => {
-  try {
-    const response = await api.get('/documents/search', {
-      params: {
-        q: query,
-        mode: 'context',
-      },
-    })
-
-    const results = response.data.results || []
-    
-    // Transform results to match All Files tab format using transformDocument
-    const transformedResults = results.map((doc: any) => {
-      return transformDocument(doc)
-    })
-
-    smartSearchResults.value = transformedResults
-
-    if (transformedResults.length === 0) {
-      toast.info('No files found matching your context. Try different terms or switch to keyword search.')
-    } else {
-      toast.success(`Found ${transformedResults.length} relevant file${transformedResults.length > 1 ? 's' : ''}`)
-    }
-  } catch (error: any) {
-    console.error('Context search error:', error)
-    toast.error(error.response?.data?.message || 'Failed to perform context search. Please try again.')
-    smartSearchResults.value = []
-  }
-}
+// Contextual search (vector) is currently disabled; smart search always uses keyword search.
 
 
 
@@ -967,9 +940,41 @@ watch(activeTab, (newTab) => {
 const files = ref<any[]>([])
 
 // Transform and populate files when props change
+// Use a flag to prevent race conditions during reloads
+const isReloading = ref(false)
+let reloadTimeout: ReturnType<typeof setTimeout> | null = null
+
 watch(() => props.documents, (newDocs) => {
+  if (!newDocs || !Array.isArray(newDocs)) {
+    console.warn('[Documents] props.documents is not an array:', newDocs)
+    if (!isReloading.value) {
+      files.value = []
+    }
+    return
+  }
+  
+  // Skip watch update if we're in the middle of a reload (onSuccess will handle it)
+  if (isReloading.value) {
+    console.log('[Documents] Skipping watch update during reload, count:', newDocs.length)
+    // Safety: If reload flag is stuck, reset it after 5 seconds
+    if (reloadTimeout) {
+      clearTimeout(reloadTimeout)
+    }
+    reloadTimeout = setTimeout(() => {
+      if (isReloading.value) {
+        console.warn('[Documents] Reload flag stuck, resetting it')
+        isReloading.value = false
+      }
+    }, 5000)
+    return
+  }
+  
+  console.log('[Documents] Updating files from props, count:', newDocs.length)
+  console.log('[Documents] First 5 document IDs:', newDocs.slice(0, 5).map((d: any) => ({ id: d.id, name: d.file_name, status: d.status })))
   files.value = newDocs.map(transformDocument)
-}, { immediate: true })
+  console.log('[Documents] Files updated, new count:', files.value.length)
+  console.log('[Documents] First 5 transformed files:', files.value.slice(0, 5).map((f: any) => ({ id: f.id, name: f.name, status: f.status })))
+}, { immediate: true, deep: true })
 
 /**
  * Requests data - Transform from backend access requests
@@ -1436,17 +1441,26 @@ const hasApprovedAccessRequest = (file: any): boolean => {
  * Check if current user can view file
  */
 const canViewFile = (file: any) => {
-  if (!currentUser.value) return false
+  if (!currentUser.value) {
+    console.log('[canViewFile] No current user, denying access to file:', file.id)
+    return false
+  }
   
   // Public files: everyone can see
-  if (file.access === 'Public') return true
+  if (file.access === 'Public') {
+    return true
+  }
   
   // Private files: uploader, admin, department_manager, and employee can see
   if (file.access === 'Private') {
-    return file.uploader === currentUser.value.name || 
+    const canView = file.uploader === currentUser.value.name || 
            isAdminUser.value || 
            isDepartmentManager.value || 
            normalizedRole.value === 'employee'
+    if (!canView) {
+      console.log('[canViewFile] Private file access denied:', file.id, 'uploader:', file.uploader, 'currentUser:', currentUser.value.name)
+    }
+    return canView
   }
   
   // Department files: users from the same department, admin, department_manager, and employee can see
@@ -1557,20 +1571,28 @@ const filteredFiles = computed(() => {
   if (activeTab.value === 'Trash' || activeTab.value === 'Request') return []
   let list = [...files.value]
   
+  console.log('[filteredFiles] Starting with files.value count:', files.value.length)
+  console.log('[filteredFiles] Active tab:', activeTab.value, 'Inner tab:', allFilesInnerTab.value)
+  
   // IMPORTANT: Filter by user permissions first!
   list = list.filter(f => canViewFile(f))
+  console.log('[filteredFiles] After canViewFile filter:', list.length)
   
   if (activeTab.value === 'My Department' && currentUser.value) {
     // Get user's department code for comparison
     // File.department is the department CODE (from transformDocument)
     const userDeptCode = getUserDepartmentCode()
     list = list.filter(f => f.department === userDeptCode)
+    console.log('[filteredFiles] After department filter:', list.length)
   }
   
   // Filter by approval status for All Files tab
   if (activeTab.value === 'All Files') {
     if (allFilesInnerTab.value === 'Approved') {
+      const beforeFilter = list.length
       list = list.filter(f => f.status === 'Approved')
+      console.log('[filteredFiles] After Approved filter:', beforeFilter, '->', list.length, 'files')
+      console.log('[filteredFiles] Approved files:', list.map(f => ({ id: f.id, name: f.name, status: f.status })))
     } else if (allFilesInnerTab.value === 'Pending') {
       list = list.filter(f => f.status === 'Pending')
     } else if (allFilesInnerTab.value === 'Rejected') {
@@ -1583,6 +1605,7 @@ const filteredFiles = computed(() => {
   list = applyAccessFilter(list)
   list = applyTagFilter(list)
   list = baseFilesFilteredBySearch(list)
+  console.log('[filteredFiles] Final filtered count:', list.length)
   return list
 })
 
@@ -1921,14 +1944,14 @@ const uploadDialogOpen = ref(false)
 const requestAccessDialogOpen = ref(false)
 const deleteConfirmDialogOpen = ref(false)
 const deletePassword = ref('')
-const deleteCountdown = ref(5)
+const deleteCountdown = ref(2)
 const deleteCountdownInterval = ref<ReturnType<typeof setInterval> | null>(null)
 const deleteTargetFile = ref<any | null>(null)
 
 // Restore single document confirmation
 const restoreConfirmDialogOpen = ref(false)
 const restorePassword = ref('')
-const restoreCountdown = ref(3)
+const restoreCountdown = ref(2)
 const restoreCountdownInterval = ref<ReturnType<typeof setInterval> | null>(null)
 const restoreTargetFile = ref<any | null>(null)
 
@@ -2092,17 +2115,69 @@ const saveEditDetails = async () => {
     toast.success('Document updated successfully')
     
     // Close dialog and reset form
-  editDialogOpen.value = false
-  dialogFile.value = null
-  editDepartmentId.value = null
-  editAccess.value = 'Department'
-  editDescription.value = ''
-  editTags.value = []
-  editNewTag.value = ''
-  isEditingFromMyDepartment.value = false
+    editDialogOpen.value = false
+    dialogFile.value = null
+    editDepartmentId.value = null
+    editAccess.value = 'Department'
+    editDescription.value = ''
+    editTags.value = []
+    editNewTag.value = ''
+    isEditingFromMyDepartment.value = false
     
-    // Refetch documents to get updated data
-    await refetchDocuments()
+    // Reload to get updated documents list from server (use Inertia to keep props in sync)
+    // Clear any existing timeout
+    if (reloadTimeout) {
+      clearTimeout(reloadTimeout)
+      reloadTimeout = null
+    }
+    
+    // Prevent multiple concurrent reloads
+    if (isReloading.value) {
+      console.warn('[Documents] Reload already in progress, skipping edit reload')
+      return
+    }
+    
+    isReloading.value = true
+    try {
+      await router.reload({
+        only: ['documents', 'trashedDocuments', 'accessRequests'],
+        onSuccess: async () => {
+          // Wait for Vue to process the prop updates
+          await nextTick()
+          console.log('[Documents] Edit reload successful, documents count:', props.documents?.length || 0)
+          // Force update files from props
+          if (props.documents && Array.isArray(props.documents)) {
+            files.value = props.documents.map(transformDocument)
+            console.log('[Documents] Files manually updated after edit, count:', files.value.length)
+          } else {
+            console.warn('[Documents] props.documents is not an array after edit reload:', props.documents)
+          }
+          // Reset reload flag and reset pagination to first page
+          await nextTick()
+          currentPage.value = 1
+          isReloading.value = false
+          if (reloadTimeout) {
+            clearTimeout(reloadTimeout)
+            reloadTimeout = null
+          }
+        },
+        onError: (errors) => {
+          console.error('[Documents] Edit reload error:', errors)
+          isReloading.value = false
+          if (reloadTimeout) {
+            clearTimeout(reloadTimeout)
+            reloadTimeout = null
+          }
+        },
+      })
+    } catch (error) {
+      console.error('[Documents] Edit reload exception:', error)
+      isReloading.value = false
+      if (reloadTimeout) {
+        clearTimeout(reloadTimeout)
+        reloadTimeout = null
+      }
+    }
   } catch (error: any) {
     console.error('Update error:', error)
     
@@ -2216,6 +2291,8 @@ const handleManageAccessRequestConfirm = () => {
 // UPLOAD FUNCTIONALITY
 // ============================================================================
 const uploadDescription = ref('')
+const uploadKeywords = ref<string[]>([])
+const newKeyword = ref('')
 const uploadDepartment = ref<number | null>(null)
 const uploadAccess = ref<'Public' | 'Private' | 'Department'>('Department')
 const uploadTags = ref<number[]>([])
@@ -2224,15 +2301,57 @@ const uploadFile = ref<File | null>(null)
 const isUploading = ref(false)
 
 /**
- * Check if uploaded file is an Excel file
+ * Check if uploaded file requires manual summary
  */
-const isExcelFile = computed(() => {
-  if (!uploadFile.value) return false
-  const excelMimeTypes = [
+// Excel, Word, and PowerPoint files require manual summary (OpenAI Chat API only supports PDF)
+const manualSummaryMimeTypes = [
+    // Excel files
     'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', // .xlsx
     'application/vnd.ms-excel', // .xls
+    // Word files
+    'application/msword', // .doc
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document', // .docx
+    // PowerPoint files
+    'application/vnd.ms-powerpoint', // .ppt
+    'application/vnd.openxmlformats-officedocument.presentationml.presentation', // .pptx
   ]
-  return excelMimeTypes.includes(uploadFile.value.type)
+
+const requiresManualSummary = computed(() => {
+  if (!uploadFile.value) return false
+  if (manualSummaryMimeTypes.includes(uploadFile.value.type)) {
+    return true
+  }
+
+  const name = uploadFile.value.name.toLowerCase()
+  const manualExtensions = ['.xlsx', '.xls', '.doc', '.docx', '.ppt', '.pptx']
+  return manualExtensions.some((ext) => name.endsWith(ext))
+})
+
+const summaryMinChars = 20
+const keywordsMinCount = 5
+
+const summaryIsValid = computed(() => {
+  if (!requiresManualSummary.value) {
+    return true
+  }
+
+  return uploadDescription.value.trim().length >= summaryMinChars
+})
+
+const keywordsAreValid = computed(() => {
+  if (!requiresManualSummary.value) {
+    return true
+  }
+
+  return uploadKeywords.value.length >= keywordsMinCount
+})
+
+const canSubmitUpload = computed(() => {
+  if (!uploadFile.value) {
+    return false
+  }
+
+  return summaryIsValid.value && keywordsAreValid.value
 })
 
 /**
@@ -2246,7 +2365,176 @@ onMounted(() => {
     // Admin: default to first department
     uploadDepartment.value = props.departments[0]?.id || null
   }
+
+  // Subscribe to PDF extraction notifications (admin only)
+  if (isAdminUser.value) {
+    const echoInstance = getEchoInstance()
+    if (echoInstance) {
+      try {
+        pdfExtractionChannel = echoInstance.private('admin.pdf-extraction')
+        
+        pdfExtractionChannel.listen('.PdfExtractionCompleted', (data: any) => {
+          console.log('[Documents] PDF extraction completed:', data)
+          
+          if (data.message) {
+            toast.success(data.message, {
+              duration: 6000,
+            })
+          }
+          
+          // Reload documents to get updated data
+          // Clear any existing timeout
+          if (reloadTimeout) {
+            clearTimeout(reloadTimeout)
+            reloadTimeout = null
+          }
+          
+          // Prevent multiple concurrent reloads
+          if (isReloading.value) {
+            console.warn('[Documents] Reload already in progress, skipping PDF extraction reload')
+            return
+          }
+          
+          isReloading.value = true
+          router.reload({
+            only: ['documents', 'trashedDocuments', 'accessRequests'],
+            onSuccess: async () => {
+              // Wait for Vue to process the prop updates
+              await nextTick()
+              console.log('[Documents] PDF extraction reload successful, documents count:', props.documents?.length || 0)
+              // Force update files from props
+              if (props.documents && Array.isArray(props.documents)) {
+                files.value = props.documents.map(transformDocument)
+                console.log('[Documents] Files manually updated after extraction, count:', files.value.length)
+              } else {
+                console.warn('[Documents] props.documents is not an array after extraction reload:', props.documents)
+              }
+              // Reset reload flag and reset pagination to first page
+              await nextTick()
+              currentPage.value = 1
+              isReloading.value = false
+              if (reloadTimeout) {
+                clearTimeout(reloadTimeout)
+                reloadTimeout = null
+              }
+            },
+            onError: (errors) => {
+              console.error('[Documents] PDF extraction reload error:', errors)
+              isReloading.value = false
+              if (reloadTimeout) {
+                clearTimeout(reloadTimeout)
+                reloadTimeout = null
+              }
+            },
+          })
+        })
+
+        // Listen for conversion failures
+        pdfExtractionChannel.listen('.DocumentConversionFailed', (data: any) => {
+          console.log('[Documents] Document conversion failed:', data)
+          
+          if (data.message) {
+            toast.error(data.message, {
+              duration: 8000,
+            })
+          } else {
+            toast.error(`Conversion failed for ${data.file_name}. Please use manual summary instead.`, {
+              duration: 8000,
+            })
+          }
+          
+          // Reload documents to get updated data
+          // Clear any existing timeout
+          if (reloadTimeout) {
+            clearTimeout(reloadTimeout)
+            reloadTimeout = null
+          }
+          
+          // Prevent multiple concurrent reloads
+          if (isReloading.value) {
+            console.warn('[Documents] Reload already in progress, skipping conversion failure reload')
+            return
+          }
+          
+          isReloading.value = true
+          router.reload({
+            only: ['documents', 'trashedDocuments', 'accessRequests'],
+            onSuccess: async () => {
+              // Wait for Vue to process the prop updates
+              await nextTick()
+              console.log('[Documents] Conversion failed reload successful, documents count:', props.documents?.length || 0)
+              // Force update files from props
+              if (props.documents && Array.isArray(props.documents)) {
+                files.value = props.documents.map(transformDocument)
+                console.log('[Documents] Files manually updated after conversion failure, count:', files.value.length)
+              } else {
+                console.warn('[Documents] props.documents is not an array after conversion failure reload:', props.documents)
+              }
+              // Reset reload flag and reset pagination to first page
+              await nextTick()
+              currentPage.value = 1
+              isReloading.value = false
+              if (reloadTimeout) {
+                clearTimeout(reloadTimeout)
+                reloadTimeout = null
+              }
+            },
+            onError: (errors) => {
+              console.error('[Documents] Conversion failure reload error:', errors)
+              isReloading.value = false
+              if (reloadTimeout) {
+                clearTimeout(reloadTimeout)
+                reloadTimeout = null
+              }
+            },
+          })
+        })
+        
+        console.log('[Documents] Subscribed to admin.pdf-extraction channel for PDF extraction notifications')
+      } catch (error) {
+        console.error('[Documents] Error subscribing to PDF extraction channel:', error)
+      }
+    } else {
+      console.warn('[Documents] Echo instance not available for PDF extraction notifications')
+    }
+  }
 })
+
+onUnmounted(() => {
+  // Unsubscribe from PDF extraction channel
+  if (pdfExtractionChannel) {
+    try {
+      pdfExtractionChannel.stopListening('.PdfExtractionCompleted')
+      pdfExtractionChannel.stopListening('.DocumentConversionFailed')
+      console.log('[Documents] Unsubscribed from PDF extraction channel')
+    } catch (error) {
+      console.error('[Documents] Error unsubscribing from PDF extraction channel:', error)
+    }
+  }
+})
+
+watch(() => uploadFile.value, () => {
+  uploadDescription.value = ''
+  uploadKeywords.value = []
+  newKeyword.value = ''
+})
+
+const addKeywordChip = () => {
+  const value = newKeyword.value.trim()
+  if (!value) {
+    return
+  }
+
+  if (!uploadKeywords.value.includes(value)) {
+    uploadKeywords.value = [...uploadKeywords.value, value]
+  }
+
+  newKeyword.value = ''
+}
+
+const removeKeywordChip = (keyword: string) => {
+  uploadKeywords.value = uploadKeywords.value.filter((k) => k !== keyword)
+}
 
 /**
  * Handle file input change
@@ -2358,6 +2646,18 @@ const handleUploadSubmit = async () => {
     return
   }
 
+  if (requiresManualSummary.value) {
+    if (!summaryIsValid.value) {
+      toast.error(`Please provide a short summary (at least ${summaryMinChars} characters).`)
+      return
+    }
+
+    if (!keywordsAreValid.value) {
+      toast.error(`Please add at least ${keywordsMinCount} keywords before uploading.`)
+      return
+    }
+  }
+
   isUploading.value = true
 
   try {
@@ -2365,6 +2665,12 @@ const handleUploadSubmit = async () => {
     formData.append('file', uploadFile.value)
     formData.append('description', uploadDescription.value || '')
     formData.append('accessibility', uploadAccess.value.toLowerCase())
+    
+    if (requiresManualSummary.value) {
+      uploadKeywords.value.forEach((keyword) => {
+        formData.append('manual_keywords[]', keyword)
+      })
+    }
     
     // Only send department_id if admin
     if (isAdminUser.value && uploadDepartment.value) {
@@ -2376,21 +2682,23 @@ const handleUploadSubmit = async () => {
       formData.append('tags[]', tagId.toString())
     })
 
-    await api.post('/documents', formData, {
+    const response = await api.post('/documents', formData, {
       headers: {
         'Content-Type': 'multipart/form-data',
       },
     })
 
-    toast.success('File uploaded successfully')
+    toast.success(response.data?.message || 'File uploaded successfully')
     
     // Reset form
-  uploadDialogOpen.value = false
-  uploadDescription.value = ''
-  uploadAccess.value = 'Department'
-  uploadTags.value = []
-  uploadNewTag.value = ''
-  uploadFile.value = null
+    uploadDialogOpen.value = false
+    uploadDescription.value = ''
+    uploadAccess.value = 'Department'
+    uploadTags.value = []
+    uploadNewTag.value = ''
+    uploadFile.value = null
+    uploadKeywords.value = []
+    newKeyword.value = ''
     
     // Reset file input
     const fileInput = document.getElementById('upload-file') as HTMLInputElement
@@ -2398,8 +2706,61 @@ const handleUploadSubmit = async () => {
       fileInput.value = ''
     }
 
-    // Refetch documents
-    await refetchDocuments()
+    // Reload to get updated documents list from server
+    // Clear any existing timeout
+    if (reloadTimeout) {
+      clearTimeout(reloadTimeout)
+      reloadTimeout = null
+    }
+    
+    // Prevent multiple concurrent reloads
+    if (isReloading.value) {
+      console.warn('[Documents] Reload already in progress, skipping duplicate reload')
+      return
+    }
+    
+    isReloading.value = true
+    try {
+      await router.reload({
+        only: ['documents', 'trashedDocuments', 'accessRequests'],
+        onSuccess: async () => {
+          // Wait for Vue to process the prop updates
+          await nextTick()
+          console.log('[Documents] Upload reload successful, documents count:', props.documents?.length || 0)
+          // Force update files from props
+          if (props.documents && Array.isArray(props.documents)) {
+            files.value = props.documents.map(transformDocument)
+            console.log('[Documents] Files manually updated after upload, count:', files.value.length)
+          } else {
+            console.warn('[Documents] props.documents is not an array after upload reload:', props.documents)
+          }
+          // Reset reload flag and reset pagination to first page
+          await nextTick()
+          currentPage.value = 1
+          isReloading.value = false
+          if (reloadTimeout) {
+            clearTimeout(reloadTimeout)
+            reloadTimeout = null
+          }
+        },
+        onError: (errors) => {
+          console.error('[Documents] Upload reload error:', errors)
+          isReloading.value = false
+          if (reloadTimeout) {
+            clearTimeout(reloadTimeout)
+            reloadTimeout = null
+          }
+        },
+      })
+    } catch (error) {
+      console.error('[Documents] Upload reload exception:', error)
+      isReloading.value = false
+      if (reloadTimeout) {
+        clearTimeout(reloadTimeout)
+        reloadTimeout = null
+      }
+    }
+
   } catch (error: any) {
     console.error('Upload error:', error)
     
@@ -2416,6 +2777,19 @@ const handleUploadSubmit = async () => {
   }
 }
 
+/**
+ * Get Echo instance for Reverb broadcasting
+ */
+const getEchoInstance = (): any => {
+  if (typeof window !== 'undefined' && (window as any).Echo) {
+    return (window as any).Echo
+  }
+  return null
+}
+
+// Store channel reference for cleanup
+let pdfExtractionChannel: any = null
+
 // ============================================================================
 // TRASH ACTIONS
 // ============================================================================
@@ -2425,7 +2799,7 @@ const handleUploadSubmit = async () => {
  */
 const openRestoreConfirmDialog = (t: any) => {
   restoreTargetFile.value = t
-  restoreCountdown.value = 3
+  restoreCountdown.value = 2
   restoreConfirmDialogOpen.value = true
   
   // Start countdown
@@ -2460,21 +2834,12 @@ const confirmRestore = async () => {
       password: restorePassword.value,
     })
     
-    if (response.data.document) {
-      const restored = transformDocument(response.data.document)
-      files.value = [restored, ...files.value]
-      trashFiles.value = trashFiles.value.filter(f => f.id !== restoreTargetFile.value.id)
-      toast.success('File restored successfully')
-    } else {
-      await refetchDocuments()
-      toast.success('File restored successfully')
-    }
+    toast.success(response.data?.message || 'File restored successfully')
     
-    // Close dialog and reset
-    restoreConfirmDialogOpen.value = false
-    restorePassword.value = ''
-    restoreCountdown.value = 3
-    restoreTargetFile.value = null
+    // Reload to get updated documents list from server
+    await router.reload({
+      only: ['documents', 'trashedDocuments', 'accessRequests'],
+    })
   } catch (error: any) {
     console.error('Error restoring document:', error)
     if (error.response?.status === 403) {
@@ -2484,7 +2849,17 @@ const confirmRestore = async () => {
     } else {
       toast.error(error.response?.data?.message || 'Failed to restore document. Please try again.')
     }
+    throw error
   }
+  
+  // Close dialog and reset
+  restoreConfirmDialogOpen.value = false
+  restorePassword.value = ''
+  restoreCountdown.value = 2
+  restoreTargetFile.value = null
+  await router.reload({
+    only: ['documents', 'trashedDocuments', 'accessRequests'],
+  })
 }
 
 /**
@@ -2536,7 +2911,6 @@ const confirmPermanentDelete = async () => {
       },
     })
     
-    trashFiles.value = trashFiles.value.filter(f => f.id !== permanentDeleteTargetFile.value.id)
     toast.success('File permanently deleted')
     
     // Close dialog and reset
@@ -2544,6 +2918,11 @@ const confirmPermanentDelete = async () => {
     permanentDeletePassword.value = ''
     permanentDeleteCountdown.value = 3
     permanentDeleteTargetFile.value = null
+    
+    // Reload to get updated documents list from server
+    await router.reload({
+      only: ['documents', 'trashedDocuments', 'accessRequests'],
+    })
   } catch (error: any) {
     console.error('Error permanently deleting document:', error)
     if (error.response?.status === 403) {
@@ -2604,7 +2983,6 @@ const confirmRestoreAll = async () => {
     
     const restoredCount = response.data.restored_count || 0
     if (restoredCount > 0) {
-      await refetchDocuments()
       toast.success(`Successfully restored ${restoredCount} file${restoredCount > 1 ? 's' : ''}`)
     } else {
       toast.info('No files were restored.')
@@ -2614,6 +2992,11 @@ const confirmRestoreAll = async () => {
     restoreAllConfirmDialogOpen.value = false
     restoreAllPassword.value = ''
     restoreAllCountdown.value = 3
+    
+    // Reload to get updated documents list from server
+    await router.reload({
+      only: ['documents', 'trashedDocuments', 'accessRequests'],
+    })
   } catch (error: any) {
     console.error('Error restoring all documents:', error)
     if (error.response?.status === 403) {
@@ -2674,7 +3057,6 @@ const confirmDeleteAll = async () => {
     
     const deletedCount = response.data.deleted_count || 0
     if (deletedCount > 0) {
-      trashFiles.value = []
       toast.success(`Successfully deleted ${deletedCount} file${deletedCount > 1 ? 's' : ''} permanently`)
     } else {
       toast.info('No files were deleted.')
@@ -2684,6 +3066,11 @@ const confirmDeleteAll = async () => {
     deleteAllConfirmDialogOpen.value = false
     deleteAllPassword.value = ''
     deleteAllCountdown.value = 3
+    
+    // Reload to get updated documents list from server
+    await router.reload({
+      only: ['documents', 'trashedDocuments', 'accessRequests'],
+    })
   } catch (error: any) {
     console.error('Error permanently deleting all documents:', error)
     if (error.response?.status === 403) {
@@ -2739,7 +3126,7 @@ const sendAccessRequest = () => {
 const openRemoveDialogForFile = (file: any) => {
   deleteTargetFile.value = file
   deletePassword.value = ''
-  deleteCountdown.value = 5
+  deleteCountdown.value = 2
   deleteConfirmDialogOpen.value = true
   
   // Start countdown
@@ -2766,7 +3153,7 @@ watch(() => deleteConfirmDialogOpen.value, (isOpen) => {
       deleteCountdownInterval.value = null
     }
     deletePassword.value = ''
-    deleteCountdown.value = 5
+    deleteCountdown.value = 2
   }
 })
 
@@ -2778,7 +3165,7 @@ watch(() => restoreConfirmDialogOpen.value, (isOpen) => {
       restoreCountdownInterval.value = null
     }
     restorePassword.value = ''
-    restoreCountdown.value = 3
+    restoreCountdown.value = 2
   }
 })
 
@@ -2844,11 +3231,14 @@ const confirmDelete = async () => {
     // Close dialog and reset
     deleteConfirmDialogOpen.value = false
     deletePassword.value = ''
-    deleteCountdown.value = 5
+    deleteCountdown.value = 2
     deleteTargetFile.value = null
     
-    // Refetch documents to update the list and show deleted file in Trash
-    await refetchDocuments()
+    // Reload to get updated documents list from server
+    await router.reload({
+      only: ['documents', 'trashedDocuments', 'accessRequests'],
+    })
+    
   } catch (error: any) {
     console.error('Delete error:', error)
     
@@ -4982,14 +5372,42 @@ const handleDocumentRequestAccess = async () => {
           <DialogTitle class="text-xl font-semibold dark:text-neutral-100 flex items-center gap-2">
             <Search class="w-5 h-5 text-blue-600 dark:text-blue-400" />
             Smart Search
-            </DialogTitle>
+          </DialogTitle>
           <DialogDescription class="text-sm dark:text-neutral-400">
-            Search for documents using keywords or context. Results will be displayed below.
+            Choose between <span class="font-semibold">Keyword</span> and <span class="font-semibold">Context</span> modes.
+            For now, both modes use the same keyword search logic under the hood.
           </DialogDescription>
         </DialogHeader>
 
         <!-- Search Bar Section -->
-        <div class="shrink-0 px-6 py-4 border-b dark:border-neutral-700 bg-gray-50 dark:bg-neutral-800/50">
+        <div class="shrink-0 px-6 py-4 border-b dark:border-neutral-700 bg-gray-50 dark:bg-neutral-800/50 space-y-3">
+          <!-- Mode Toggle -->
+          <div class="flex items-center gap-2">
+            <span class="text-xs font-medium text-gray-600 dark:text-neutral-300">Search mode:</span>
+            <div class="inline-flex rounded-lg border border-border/70 overflow-hidden dark:border-neutral-700">
+              <button
+                type="button"
+                class="px-3 py-1.5 text-xs sm:text-sm font-medium transition-colors"
+                :class="smartSearchMode === 'keywords'
+                  ? 'bg-blue-600 text-white'
+                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-neutral-800 dark:text-neutral-300 dark:hover:bg-neutral-700'"
+                @click="smartSearchMode = 'keywords'"
+              >
+                Keyword
+              </button>
+              <button
+                type="button"
+                class="px-3 py-1.5 text-xs sm:text-sm font-medium border-l border-border/70 transition-colors dark:border-neutral-700"
+                :class="smartSearchMode === 'context'
+                  ? 'bg-blue-600 text-white'
+                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-neutral-800 dark:text-neutral-300 dark:hover:bg-neutral-700'"
+                @click="smartSearchMode = 'context'"
+              >
+                Context
+              </button>
+            </div>
+          </div>
+
           <div class="flex flex-col sm:flex-row gap-3">
             <!-- Search Input -->
             <div class="flex-1 relative">
@@ -4997,21 +5415,12 @@ const handleDocumentRequestAccess = async () => {
               <Input
                 v-model="smartSearchQuery"
                 @keyup.enter="performSmartSearch"
-                :placeholder="smartSearchMode === 'keywords' ? 'Enter keywords to search (e.g., report, budget, Q4)...' : 'Describe what you\'re looking for (e.g., financial reports from last quarter)...'"
+                :placeholder="smartSearchMode === 'keywords'
+                  ? 'Enter keywords to search (e.g., report, budget, Q4)...'
+                  : 'Describe what you are looking for (e.g., policies about remote work)...'"
                 class="pl-10 h-11 dark:bg-neutral-800 dark:border-neutral-700 dark:text-neutral-100"
               />
-              </div>
-
-            <!-- Search Mode Selector -->
-            <Select v-model="smartSearchMode">
-              <SelectTrigger class="w-full sm:w-[180px] h-11 dark:bg-neutral-800 dark:border-neutral-700 dark:text-neutral-100">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent class="dark:bg-neutral-800 dark:border-neutral-700">
-                <SelectItem value="keywords" class="dark:text-neutral-100">Keywords</SelectItem>
-                <SelectItem value="context" class="dark:text-neutral-100">Context</SelectItem>
-              </SelectContent>
-            </Select>
+            </div>
 
             <!-- Search Button -->
             <Button
@@ -5023,9 +5432,8 @@ const handleDocumentRequestAccess = async () => {
               <Search v-else class="w-4 h-4 mr-2" />
               Search
             </Button>
-              </div>
-
-                </div>
+          </div>
+        </div>
 
         <!-- Results Section -->
         <div 
@@ -5059,7 +5467,7 @@ const handleDocumentRequestAccess = async () => {
                       </div>
               <h3 class="text-lg font-semibold text-gray-900 dark:text-neutral-100 mb-2">No Results Found</h3>
               <p class="text-sm text-gray-600 dark:text-neutral-400 text-center max-w-md">
-                Try different keywords or switch to context search mode.
+                Try different keywords or refine your search terms.
               </p>
                       </div>
 
@@ -5215,36 +5623,104 @@ const handleDocumentRequestAccess = async () => {
             </div>
           </div>
 
-          <div>
-            <Label for="upload-desc" class="text-xs sm:text-sm font-medium block mb-1.5 sm:mb-2 dark:text-neutral-100">
-              Description
-              <span v-if="isExcelFile" class="text-red-500">*</span>
-            </Label>
-            <!-- Excel file warning -->
-            <div v-if="isExcelFile" class="mb-2 p-2.5 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-md">
-              <div class="flex items-start gap-2">
-                <AlertCircle class="w-4 h-4 text-amber-600 dark:text-amber-400 mt-0.5 shrink-0" />
+          <div
+            v-if="requiresManualSummary"
+            class="rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50/80 dark:bg-amber-900/10 p-4 space-y-4">
+            <div class="flex items-start gap-3">
+              <div
+                class="w-10 h-10 rounded-full bg-amber-100 dark:bg-amber-800/40 flex items-center justify-center">
+                <AlertCircle class="w-5 h-5 text-amber-600 dark:text-amber-300" />
+              </div>
                 <div class="flex-1">
-                  <p class="text-xs font-semibold text-amber-800 dark:text-amber-300 mb-1">
-                    Description Highly Recommended
+                <p class="text-xs font-semibold text-amber-900 dark:text-amber-300 mb-1">
+                  We can’t auto-extract Word, Excel, or PowerPoint files.
                   </p>
-                  <p class="text-[10px] sm:text-xs text-amber-700 dark:text-amber-400">
-                    Excel files cannot have their content extracted for search. Adding a description will help others find this file when searching.
+                <p class="text-[11px] text-amber-800 dark:text-amber-200">
+                  Add a brief summary (1–2 sentences) and at least <span class="font-semibold">5
+                  keywords</span> so this file becomes searchable. Mention the people involved,
+                  departments, policy numbers, dates, or codes that matter.
                   </p>
                 </div>
               </div>
-            </div>
-            <Textarea id="upload-desc" v-model="uploadDescription"
-              :placeholder="isExcelFile ? 'Enter a detailed description of the Excel file (highly recommended for searchability)...' : 'Enter a short description of the document...'"
+
+            <div class="space-y-2">
+              <Label for="upload-desc" class="text-xs sm:text-sm font-medium dark:text-neutral-100 flex items-center gap-2">
+                Summary / Description
+                <span class="text-red-500">*</span>
+                <span class="text-[10px] text-amber-800 dark:text-amber-200">({{ summaryMinChars }}+ characters)</span>
+              </Label>
+              <Textarea
+                id="upload-desc"
+                v-model="uploadDescription"
+                placeholder="Example: 'Maria Santos submitted the FY25 Marketing Plan for VP review due 11/30.'"
               :class="[
                 'w-full text-xs sm:text-sm dark:bg-neutral-800 dark:border-neutral-700 dark:text-neutral-100',
-                isExcelFile && !uploadDescription ? 'border-amber-300 dark:border-amber-700 focus:border-amber-400 dark:focus:border-amber-600' : ''
+                  !summaryIsValid ? 'border-amber-400 dark:border-amber-600 focus:border-amber-500 dark:focus:border-amber-500' : ''
               ]"
-              rows="3" />
-            <p v-if="isExcelFile && !uploadDescription" class="text-[10px] sm:text-xs text-amber-600 dark:text-amber-400 mt-1 flex items-center gap-1">
+                rows="3"
+              />
+              <p v-if="!summaryIsValid" class="text-[10px] text-amber-600 dark:text-amber-400 flex items-center gap-1">
               <AlertCircle class="w-3 h-3" />
-              Please add a description to make this file searchable
-            </p>
+                Please add at least {{ summaryMinChars }} characters.
+              </p>
+            </div>
+
+            <div class="space-y-2">
+              <div class="flex items-center justify-between">
+                <Label class="text-xs sm:text-sm font-medium dark:text-neutral-100 flex items-center gap-2">
+                  Keywords (min 5)
+                  <span class="text-red-500">*</span>
+                </Label>
+                <p class="text-[10px] text-gray-500 dark:text-neutral-400">
+                  e.g. "Maria Santos" "Finance Dept" "FY25 Plan" "Q4 Deadline"
+                </p>
+              </div>
+
+              <div class="flex flex-wrap gap-2 mb-2">
+                <Badge
+                  v-for="keyword in uploadKeywords"
+                  :key="keyword"
+                  class="bg-blue-50 text-blue-700 dark:bg-blue-900/20 dark:text-blue-200 text-[10px] sm:text-xs flex items-center gap-1 px-2 py-0.5 rounded-full">
+                  {{ keyword }}
+                  <button @click="removeKeywordChip(keyword)" class="ml-1 hover:text-red-600">
+                    <X class="w-2.5 h-2.5" />
+                  </button>
+                </Badge>
+                <p v-if="uploadKeywords.length === 0" class="text-[10px] text-gray-500 dark:text-neutral-400">
+                  No keywords added yet
+                </p>
+              </div>
+
+              <div class="flex gap-2 flex-col sm:flex-row">
+                <Input
+                  v-model="newKeyword"
+                  placeholder='"Type a name or phrase"'
+                  class="flex-1 text-xs sm:text-sm dark:bg-neutral-800 dark:border-neutral-700 dark:text-neutral-100"
+                  @keyup.enter.prevent="addKeywordChip"
+                />
+                <Button type="button" size="sm" class="text-xs sm:text-sm shrink-0" @click="addKeywordChip">
+                  Add Keyword
+                </Button>
+              </div>
+
+              <p v-if="!keywordsAreValid" class="text-[10px] text-amber-600 dark:text-amber-400 flex items-center gap-1">
+                <AlertCircle class="w-3 h-3" />
+                Please add at least 5 keywords (names, departments, codes, etc.).
+              </p>
+            </div>
+          </div>
+
+          <div v-else>
+            <Label for="upload-desc-simple" class="text-xs sm:text-sm font-medium block mb-1.5 sm:mb-2 dark:text-neutral-100">
+              Description
+            </Label>
+            <Textarea
+              id="upload-desc-simple"
+              v-model="uploadDescription"
+              placeholder="Enter a short description (optional)..."
+              class="w-full text-xs sm:text-sm dark:bg-neutral-800 dark:border-neutral-700 dark:text-neutral-100"
+              rows="3"
+            />
           </div>
 
           <div :class="['grid gap-3 sm:gap-4', isAdminUser ? 'grid-cols-1 sm:grid-cols-2' : 'grid-cols-1']">
@@ -5356,7 +5832,7 @@ const handleDocumentRequestAccess = async () => {
             </Button>
             <Button size="sm" class="flex-1 sm:flex-none bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white" 
               @click="handleUploadSubmit" 
-              :disabled="isUploading || !uploadFile">
+              :disabled="isUploading || !uploadFile || !canSubmitUpload">
               <Loader2 v-if="isUploading" class="w-4 h-4 mr-2 animate-spin" />
               {{ isUploading ? 'Uploading...' : 'Upload' }}
             </Button>
@@ -6565,7 +7041,7 @@ PERMISSION DETAILS & ACTIVITY MODAL
         <AlertDialogFooter class="gap-2 flex-col sm:flex-row">
           <AlertDialogCancel 
             class="w-full sm:w-auto"
-            @click="restoreConfirmDialogOpen = false; restorePassword = ''; restoreCountdown = 3">
+            @click="restoreConfirmDialogOpen = false; restorePassword = ''; restoreCountdown = 2">
             Cancel
           </AlertDialogCancel>
           <AlertDialogAction

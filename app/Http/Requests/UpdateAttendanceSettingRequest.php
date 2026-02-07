@@ -26,6 +26,10 @@ class UpdateAttendanceSettingRequest extends FormRequest
             'required_time_out' => ['sometimes', 'required', 'date_format:H:i', 'after:required_time_in'],
             'break_duration_minutes' => ['sometimes', 'required', 'integer', 'min:0'],
             'break_is_counted' => ['sometimes', 'required', 'boolean'],
+            'late_threshold_warning' => ['sometimes', 'integer', 'min:0'],
+            'late_threshold_memo' => ['sometimes', 'integer', 'min:0'],
+            'absent_threshold_warning' => ['sometimes', 'integer', 'min:0'],
+            'absent_threshold_memo' => ['sometimes', 'integer', 'min:0'],
             'password' => ['required', 'current_password:web'],
         ];
     }

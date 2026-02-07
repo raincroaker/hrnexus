@@ -14,6 +14,15 @@ class Document extends Model
 {
     use HasFactory, Searchable, SoftDeletes;
 
+    private const DESCRIPTION_ONLY_MIME_TYPES = [
+        'application/msword',
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'application/vnd.ms-powerpoint',
+        'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+        'application/vnd.ms-excel',
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    ];
+
     protected $fillable = [
         'user_id',
         'department_id',
@@ -32,6 +41,7 @@ class Document extends Model
         'restored_by',
         'restored_at',
         'deleted_by',
+        'extraction_status',
     ];
 
     public function user(): BelongsTo
@@ -149,22 +159,17 @@ class Document extends Model
     public function shouldBeSearchable(): bool
     {
         // Index approved documents that have either:
-        // 1. Content (PDF, Word, PPT with extracted text)
-        // 2. Description (Excel files and other files without content extraction)
+        // 1. Extracted content (PDF files)
+        // 2. Description (Word, Excel, PowerPoint files)
         $hasContent = ! empty($this->content);
         $hasDescription = ! empty($this->description);
-        $excelMimeTypes = [
-            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', // .xlsx
-            'application/vnd.ms-excel', // .xls
-        ];
-        $isExcel = in_array($this->mime_type, $excelMimeTypes);
+        $isDescriptionOnly = in_array($this->mime_type, self::DESCRIPTION_ONLY_MIME_TYPES, true);
 
-        // Excel files: index if approved and has description
-        if ($isExcel) {
+        if ($isDescriptionOnly) {
             return $this->status === 'approved' && $hasDescription;
         }
 
-        // Other files: index if approved and has content
+        // PDFs (or other extractable files): require extracted content
         return $this->status === 'approved' && $hasContent;
     }
 }

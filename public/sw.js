@@ -1,7 +1,6 @@
 // Service Worker for HRNexus PWA
 const CACHE_NAME = 'hrnexus-v1';
 const urlsToCache = [
-  '/',
   '/login',
   '/dashboard',
   '/images/HRNexusLogo.png',
@@ -36,39 +35,43 @@ self.addEventListener('activate', (event) => {
 
 // Fetch event - serve from cache, fallback to network
 self.addEventListener('fetch', (event) => {
+  if (event.request.method !== 'GET') {
+    return;
+  }
+
+  if (event.request.mode === 'navigate' || event.request.destination === 'document') {
+    return;
+  }
+
+  const requestUrl = new URL(event.request.url);
+
+  if (requestUrl.origin !== self.location.origin) {
+    return;
+  }
+
   event.respondWith(
     caches.match(event.request)
       .then((response) => {
-        // Cache hit - return response
         if (response) {
           return response;
         }
 
-        // Clone the request
         const fetchRequest = event.request.clone();
 
-        return fetch(fetchRequest).then((response) => {
-          // Check if valid response
-          if (!response || response.status !== 200 || response.type !== 'basic') {
-            return response;
+        return fetch(fetchRequest).then((networkResponse) => {
+          if (!networkResponse || networkResponse.status !== 200 || networkResponse.type !== 'basic') {
+            return networkResponse;
           }
 
-          // Clone the response
-          const responseToCache = response.clone();
+          const responseToCache = networkResponse.clone();
 
           caches.open(CACHE_NAME)
             .then((cache) => {
               cache.put(event.request, responseToCache);
             });
 
-          return response;
+          return networkResponse;
         });
-      })
-      .catch(() => {
-        // If both cache and network fail, return offline page if available
-        if (event.request.destination === 'document') {
-          return caches.match('/');
-        }
       })
   );
 });

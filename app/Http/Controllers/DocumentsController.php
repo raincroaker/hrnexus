@@ -7,13 +7,13 @@ use App\Http\Requests\RejectDocumentRequest;
 use App\Http\Requests\StoreDocumentAccessRequest;
 use App\Http\Requests\StoreDocumentRequest;
 use App\Http\Requests\UpdateDocumentRequest;
+use App\Jobs\ExtractPdfContentJob;
 use App\Models\Department;
 use App\Models\Document;
 use App\Models\DocumentAccessRequest;
 use App\Models\Employee;
 use App\Models\Tag;
 use App\Services\EmbeddingService;
-use App\Services\PdfExtractionService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -28,10 +28,26 @@ use Meilisearch\Client;
 
 class DocumentsController extends Controller
 {
+    private const PDF_MIME_TYPE = 'application/pdf';
+
+    private const DESCRIPTION_ONLY_MIME_TYPES = [
+        // Excel files
+        'application/vnd.ms-excel',
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        // Word files (require manual summary - OpenAI Chat API doesn't support them)
+        'application/msword',
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        // PowerPoint files (require manual summary - OpenAI Chat API doesn't support them)
+        'application/vnd.ms-powerpoint',
+        'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    ];
+
     public function index(): Response
     {
-        // Fetch all documents with relationships (no filtering - frontend handles permissions)
+        // Fetch all non-deleted documents with relationships (no filtering - frontend handles permissions)
+        // SoftDeletes trait automatically excludes soft-deleted documents, but we make it explicit
         $documents = Document::query()
+            ->whereNull('deleted_at') // Explicitly exclude soft-deleted documents
             ->with([
                 'user:id,name,email',
                 'department:id,name,code',
@@ -128,8 +144,30 @@ class DocumentsController extends Controller
             ->latest()
             ->get();
 
+        // Ensure all document attributes are included (including extraction_status, restored_by, deleted_by)
+        // Explicitly map to ensure all fields are serialized by Inertia
+        $documentsArray = $documents->map(function ($document) {
+            $docArray = $document->toArray();
+            // Explicitly ensure these fields are included (they might be null but should still be present)
+            $docArray['extraction_status'] = $document->extraction_status;
+            $docArray['restored_by'] = $document->restored_by;
+            $docArray['deleted_by'] = $document->deleted_by;
+            $docArray['restored_at'] = $document->restored_at?->toDateTimeString();
+
+            return $docArray;
+        })->all();
+
+        // Log the count to debug the discrepancy
+        Log::info('DocumentsController@index: Returning documents to frontend', [
+            'total_documents_in_db' => Document::whereNull('deleted_at')->count(),
+            'documents_collection_count' => $documents->count(),
+            'documents_array_count' => count($documentsArray),
+            'first_5_ids' => collect($documentsArray)->take(5)->pluck('id')->toArray(),
+            'last_5_ids' => collect($documentsArray)->take(-5)->pluck('id')->toArray(),
+        ]);
+
         return Inertia::render('Documents', [
-            'documents' => $documents,
+            'documents' => $documentsArray,
             'trashedDocuments' => $trashedDocuments,
             'tags' => $tags,
             'departments' => $departments,
@@ -188,7 +226,32 @@ class DocumentsController extends Controller
         }
 
         // Store file
-        $file->storeAs($documentsDir, $storedName, 'local');
+        // storeAs returns path relative to disk root (storage/app/private)
+        // So 'private/documents' becomes 'private/documents' relative to disk root
+        // Which results in: storage/app/private/private/documents/filename
+        $storedPath = $file->storeAs($documentsDir, $storedName, 'local');
+
+        // Verify file was stored successfully
+        if (! $storedPath || ! Storage::disk('local')->exists($storedPath)) {
+            Log::error('File storage failed', [
+                'stored_name' => $storedName,
+                'stored_path' => $storedPath,
+                'documents_dir' => $documentsDir,
+                'disk_root' => Storage::disk('local')->path(''),
+                'expected_full_path' => Storage::disk('local')->path($storedPath),
+            ]);
+
+            return response()->json(['message' => 'Failed to store file.'], 500);
+        }
+
+        Log::info('File stored successfully', [
+            'stored_name' => $storedName,
+            'stored_path' => $storedPath, // This is what storeAs returns - use this exact path!
+            'documents_dir' => $documentsDir,
+            'file_size' => Storage::disk('local')->size($storedPath),
+            'full_path' => Storage::disk('local')->path($storedPath),
+            'disk_root' => Storage::disk('local')->path(''),
+        ]);
 
         // Determine status and review information based on role
         $status = 'pending';
@@ -232,113 +295,64 @@ class DocumentsController extends Controller
             }
         }
 
-        // Extract content and index to Meilisearch if document is approved
-        // Supported: PDF, Word (.docx), PowerPoint (.pptx)
-        // Excluded: Excel files
-        $supportedMimeTypes = [
-            'application/pdf',
-            'application/vnd.openxmlformats-officedocument.wordprocessingml.document', // Word .docx
-            'application/vnd.openxmlformats-officedocument.presentationml.presentation', // PowerPoint .pptx
-        ];
+        $isManualSummaryFile = $this->isDescriptionOnlyMime($document->mime_type);
+        $manualKeywords = $this->normalizeManualKeywords($request->input('manual_keywords', []));
 
-        if ($status === 'approved' && in_array($document->mime_type, $supportedMimeTypes)) {
-            Log::info('Starting content extraction for approved document', [
-                'document_id' => $document->id,
-                'file_name' => $document->file_name,
-                'mime_type' => $document->mime_type,
-            ]);
-
-            try {
-                $extractionService = app(PdfExtractionService::class);
-                $extractedContent = $extractionService->extractText($document);
-
-                if ($extractedContent) {
-                    // Generate embedding for the extracted content
-                    Log::info('Generating embedding for extracted content', [
-                        'document_id' => $document->id,
-                    ]);
-
-                    $embeddingService = app(EmbeddingService::class);
-                    $embedding = $embeddingService->generateEmbedding($extractedContent);
-
-                    // Update document with extracted content and embedding
-                    $updateData = [
-                        'content' => $extractedContent,
-                    ];
-
-                    if ($embedding) {
-                        $updateData['embedding'] = json_encode($embedding);
-                        Log::info('Embedding generated and will be saved', [
-                            'document_id' => $document->id,
-                            'embedding_dimensions' => count($embedding),
-                        ]);
-                    } else {
-                        Log::warning('Embedding generation failed, saving without embedding', [
-                            'document_id' => $document->id,
-                        ]);
-                    }
-
-                    $document->update($updateData);
-
-                    Log::info('Content and embedding extracted, document updated', [
-                        'document_id' => $document->id,
-                        'content_length' => strlen($extractedContent),
-                        'has_embedding' => ! empty($embedding),
-                    ]);
-
-                    // Refresh the model to ensure we have the latest data
-                    $document->refresh();
-
-                    // Index to Meilisearch using Scout (includes embedding as _vectors)
-                    try {
-                        $document->searchable();
-                        Log::info('Document indexed to Meilisearch with content and embedding', [
-                            'document_id' => $document->id,
-                        ]);
-                    } catch (\Exception $e) {
-                        Log::error('Failed to index document to Meilisearch', [
-                            'document_id' => $document->id,
-                            'error' => $e->getMessage(),
-                            'trace' => $e->getTraceAsString(),
-                        ]);
-                    }
-                } else {
-                    Log::warning('Content extraction returned empty, document not indexed', [
-                        'document_id' => $document->id,
-                    ]);
-                }
-            } catch (\Exception $e) {
-                // Log error but don't fail the upload
-                Log::error('Failed to extract content or index document', [
-                    'document_id' => $document->id,
-                    'error' => $e->getMessage(),
-                    'trace' => $e->getTraceAsString(),
-                ]);
+        if ($isManualSummaryFile) {
+            $manualContent = $this->buildManualContent($document->description, $manualKeywords);
+            if ($manualContent) {
+                $document->update(['content' => $manualContent]);
+                $document->refresh();
             }
         }
 
-        // For Excel files (and other files without content extraction), index to Meilisearch if they have description
-        $excelMimeTypes = [
-            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', // .xlsx
-            'application/vnd.ms-excel', // .xls
-        ];
+        // Dispatch extraction job for approved PDF files only (async)
+        // Word/PPT files require manual summary (OpenAI Chat API doesn't support them)
+        $isPdf = $document->mime_type === self::PDF_MIME_TYPE;
 
-        if (in_array($document->mime_type, $excelMimeTypes) && $status === 'approved' && ! empty($document->description)) {
-            // Excel files: index to Meilisearch with description only (no content, no embedding)
-            try {
-                $document->refresh(); // Ensure we have latest data
-                $document->searchable();
-                Log::info('Excel file indexed to Meilisearch with description only', [
+        if ($status === 'approved' && $isPdf) {
+            // Use the EXACT path that storeAs returned (reconstruct it the same way)
+            // storeAs('private/documents', filename, 'local') returns 'private/documents/filename'
+            // This is relative to disk root: storage/app/private
+            // So full path is: storage/app/private/private/documents/filename
+            $filePath = 'private/documents/'.$document->stored_name;
+
+            // Verify file exists before dispatching job
+            if (! Storage::disk('local')->exists($filePath)) {
+                Log::error('File not found before dispatching extraction job', [
                     'document_id' => $document->id,
-                    'has_description' => ! empty($document->description),
+                    'stored_name' => $document->stored_name,
+                    'file_path' => $filePath,
+                    'full_path' => Storage::disk('local')->path($filePath),
+                    'disk_root' => Storage::disk('local')->path(''),
+                    'stored_path_from_upload' => $storedPath, // What storeAs returned
+                    'all_files' => Storage::disk('local')->allFiles('private/documents'),
                 ]);
-            } catch (\Exception $e) {
-                Log::error('Failed to index Excel file to Meilisearch', [
-                    'document_id' => $document->id,
-                    'error' => $e->getMessage(),
-                    'trace' => $e->getTraceAsString(),
-                ]);
+
+                return response()->json([
+                    'message' => 'File was uploaded but could not be found for processing.',
+                    'document' => $document,
+                ], 500);
             }
+
+            Log::info('Dispatching extraction job for approved PDF document', [
+                'document_id' => $document->id,
+                'file_name' => $document->file_name,
+                'mime_type' => $document->mime_type,
+                'file_path' => $filePath,
+                'file_exists' => true,
+                'file_size' => Storage::disk('local')->size($filePath),
+            ]);
+
+            // Set initial extraction status
+            $document->update(['extraction_status' => 'pending']);
+
+            // Dispatch job to queue
+            ExtractPdfContentJob::dispatch($document->id);
+        }
+
+        if ($isManualSummaryFile && $status === 'approved' && ! empty($document->content)) {
+            $this->generateEmbeddingAndIndex($document);
         }
 
         // Load relationships for response
@@ -360,6 +374,7 @@ class DocumentsController extends Controller
     public function indexApi(): JsonResponse
     {
         $documents = Document::query()
+            ->whereNull('deleted_at') // Explicitly exclude soft-deleted documents
             ->with([
                 'user:id,name,email',
                 'department:id,name,code',
@@ -449,8 +464,30 @@ class DocumentsController extends Controller
             ->latest()
             ->get();
 
+        // Ensure all document attributes are included (including extraction_status, restored_by, deleted_by)
+        // Explicitly map to ensure all fields are serialized
+        $documentsArray = $documents->map(function ($document) {
+            $docArray = $document->toArray();
+            // Explicitly ensure these fields are included
+            $docArray['extraction_status'] = $document->extraction_status;
+            $docArray['restored_by'] = $document->restored_by;
+            $docArray['deleted_by'] = $document->deleted_by;
+            $docArray['restored_at'] = $document->restored_at?->toDateTimeString();
+
+            return $docArray;
+        })->all();
+
+        // Log the count to debug the discrepancy
+        Log::info('DocumentsController@indexApi: Returning documents to frontend', [
+            'total_documents_in_db' => Document::whereNull('deleted_at')->count(),
+            'documents_collection_count' => $documents->count(),
+            'documents_array_count' => count($documentsArray),
+            'first_5_ids' => collect($documentsArray)->take(5)->pluck('id')->toArray(),
+            'last_5_ids' => collect($documentsArray)->take(-5)->pluck('id')->toArray(),
+        ]);
+
         return response()->json([
-            'documents' => $documents,
+            'documents' => $documentsArray,
             'trashedDocuments' => $trashedDocuments,
             'accessRequests' => $accessRequests,
         ]);
@@ -480,10 +517,11 @@ class DocumentsController extends Controller
 
         // For keyword search, use Meilisearch
         if ($mode === 'keywords') {
-            // Search using Laravel Scout - only filter by approved status
+            // Search using Laravel Scout - only filter by approved status, limit to top 20 by relevance
             // Frontend will handle permission checks and show "Request Access" if needed
             $searchResults = Document::search($query)
                 ->where('status', 'approved')
+                ->take(20)
                 ->get();
 
             // Load relationships for results
@@ -544,8 +582,8 @@ class DocumentsController extends Controller
                     sleep(1);
                 }
 
-                // Perform vector search using hybrid search with user-provided vector
-                // For user-provided embeddings, we use hybrid with semanticRatio 1.0 (pure semantic)
+                // Perform vector search: top 10 by semantic relevance only
+                // For user-provided embeddings, we use hybrid with semanticRatio 1.0 (pure vector search)
                 $vectorSearchResults = $index->search('', [
                     'hybrid' => [
                         'embedder' => 'default',
@@ -553,7 +591,7 @@ class DocumentsController extends Controller
                     ],
                     'vector' => $queryEmbedding, // Pass vector as array
                     'filter' => ['status = approved'],
-                    'limit' => 100,
+                    'limit' => 10,
                 ]);
 
                 // Extract hits and relevance scores from Meilisearch results
@@ -672,14 +710,38 @@ class DocumentsController extends Controller
     public function updateContent(Request $request, Document $document): JsonResponse
     {
         $request->validate([
-            'content' => ['nullable', 'string'],
+            'content' => ['nullable', 'string', 'max:50000'], // Match upload validation limit
         ]);
 
         $document->update([
             'content' => $request->input('content'),
         ]);
 
+        // Regenerate embedding and re-index if content is provided
+        if (! empty($document->content)) {
+            try {
+                $this->generateEmbeddingAndIndex($document);
+                Log::info('Content updated, embedding regenerated and document re-indexed', [
+                    'document_id' => $document->id,
+                ]);
+            } catch (\Exception $e) {
+                Log::error('Failed to regenerate embedding or re-index document after content update', [
+                    'document_id' => $document->id,
+                    'error' => $e->getMessage(),
+                    'trace' => $e->getTraceAsString(),
+                ]);
+                // Continue even if embedding fails - content is still updated
+            }
+        } else {
+            // If content is empty, remove from search index
+            $document->unsearchable();
+            Log::info('Content cleared, document removed from search index', [
+                'document_id' => $document->id,
+            ]);
+        }
+
         // Load relationships for response
+        $document->refresh();
         $document->load([
             'user:id,name,email',
             'department:id,name,code',
@@ -763,112 +825,38 @@ class DocumentsController extends Controller
             'review_message' => $request->input('review_message') ?: "File approved by {$employee->full_name}",
         ]);
 
-        // Extract content and index to Meilisearch if document is now approved
-        // Supported: PDF, Word (.docx), PowerPoint (.pptx)
-        // Excluded: Excel files
-        $supportedMimeTypes = [
-            'application/pdf',
-            'application/vnd.openxmlformats-officedocument.wordprocessingml.document', // Word .docx
-            'application/vnd.openxmlformats-officedocument.presentationml.presentation', // PowerPoint .pptx
-        ];
+        // Dispatch extraction job for newly approved PDF files only (async)
+        // Word/PPT files require manual summary (OpenAI Chat API doesn't support them)
+        $isPdf = $document->mime_type === self::PDF_MIME_TYPE;
+        $shouldExtractContent = $isPdf && empty($document->content);
 
-        if (in_array($document->mime_type, $supportedMimeTypes) && empty($document->content)) {
-            Log::info('Starting content extraction for newly approved document', [
+        if ($shouldExtractContent) {
+            Log::info('Dispatching extraction job for newly approved PDF document', [
                 'document_id' => $document->id,
                 'file_name' => $document->file_name,
                 'mime_type' => $document->mime_type,
             ]);
 
-            try {
-                $extractionService = app(PdfExtractionService::class);
-                $extractedContent = $extractionService->extractText($document);
+            // Set initial extraction status
+            $document->update(['extraction_status' => 'pending']);
 
-                if ($extractedContent) {
-                    // Generate embedding for the extracted content
-                    Log::info('Generating embedding for extracted content', [
-                        'document_id' => $document->id,
-                    ]);
-
-                    $embeddingService = app(EmbeddingService::class);
-                    $embedding = $embeddingService->generateEmbedding($extractedContent);
-
-                    // Update document with extracted content and embedding
-                    $updateData = [
-                        'content' => $extractedContent,
-                    ];
-
-                    if ($embedding) {
-                        $updateData['embedding'] = json_encode($embedding);
-                        Log::info('Embedding generated and will be saved', [
-                            'document_id' => $document->id,
-                            'embedding_dimensions' => count($embedding),
-                        ]);
-                    } else {
-                        Log::warning('Embedding generation failed, saving without embedding', [
-                            'document_id' => $document->id,
-                        ]);
-                    }
-
-                    $document->update($updateData);
-
-                    Log::info('Content and embedding extracted, document updated', [
-                        'document_id' => $document->id,
-                        'content_length' => strlen($extractedContent),
-                        'has_embedding' => ! empty($embedding),
-                    ]);
-
-                    // Refresh the model to ensure we have the latest data
-                    $document->refresh();
-
-                    // Index to Meilisearch using Scout (includes embedding as _vectors)
-                    try {
-                        $document->searchable();
-                        Log::info('Document indexed to Meilisearch with content and embedding', [
-                            'document_id' => $document->id,
-                        ]);
-                    } catch (\Exception $e) {
-                        Log::error('Failed to index document to Meilisearch', [
-                            'document_id' => $document->id,
-                            'error' => $e->getMessage(),
-                            'trace' => $e->getTraceAsString(),
-                        ]);
-                    }
-                } else {
-                    Log::warning('Content extraction returned empty, document not indexed', [
-                        'document_id' => $document->id,
-                    ]);
-                }
-            } catch (\Exception $e) {
-                // Log error but don't fail the approval
-                Log::error('Failed to extract content or index document during approval', [
-                    'document_id' => $document->id,
-                    'error' => $e->getMessage(),
-                    'trace' => $e->getTraceAsString(),
-                ]);
-            }
+            // Dispatch job to queue
+            ExtractPdfContentJob::dispatch($document->id);
         }
 
-        // For Excel files (and other files without content extraction), index to Meilisearch if they have description
-        $excelMimeTypes = [
-            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', // .xlsx
-            'application/vnd.ms-excel', // .xls
-        ];
+        $isManualSummaryFile = $this->isDescriptionOnlyMime($document->mime_type);
 
-        if (in_array($document->mime_type, $excelMimeTypes) && ! empty($document->description)) {
-            // Excel files: index to Meilisearch with description only (no content, no embedding)
-            try {
-                $document->refresh(); // Ensure we have latest data
-                $document->searchable();
-                Log::info('Excel file indexed to Meilisearch with description only', [
-                    'document_id' => $document->id,
-                    'has_description' => ! empty($document->description),
-                ]);
-            } catch (\Exception $e) {
-                Log::error('Failed to index Excel file to Meilisearch', [
-                    'document_id' => $document->id,
-                    'error' => $e->getMessage(),
-                    'trace' => $e->getTraceAsString(),
-                ]);
+        if ($isManualSummaryFile) {
+            if (empty($document->content)) {
+                $manualContent = $this->buildManualContent($document->description, []);
+                if ($manualContent) {
+                    $document->update(['content' => $manualContent]);
+                    $document->refresh();
+                }
+            }
+
+            if (! empty($document->content)) {
+                $this->generateEmbeddingAndIndex($document);
             }
         }
 
@@ -1392,5 +1380,102 @@ class DocumentsController extends Controller
         ]);
 
         return response()->download(Storage::disk('local')->path($filePath), $document->file_name);
+    }
+
+    private function normalizeManualKeywords($keywords): array
+    {
+        if (! is_array($keywords)) {
+            return [];
+        }
+
+        return collect($keywords)
+            ->map(fn ($keyword) => trim((string) $keyword))
+            ->filter()
+            ->unique()
+            ->values()
+            ->all();
+    }
+
+    private function buildManualContent(?string $summary, array $keywords): ?string
+    {
+        $summary = trim((string) $summary);
+        $keywordLine = collect($keywords)
+            ->map(fn ($keyword) => $this->formatKeyword($keyword))
+            ->filter()
+            ->implode(' ');
+
+        $parts = array_filter([$summary, $keywordLine], fn ($part) => $part !== '');
+
+        if (empty($parts)) {
+            return null;
+        }
+
+        return implode("\n\n", $parts);
+    }
+
+    private function formatKeyword(string $keyword): string
+    {
+        $keyword = trim($keyword);
+
+        if ($keyword === '') {
+            return '';
+        }
+
+        $startsWithQuote = str_starts_with($keyword, '"');
+        $endsWithQuote = str_ends_with($keyword, '"');
+
+        if ($startsWithQuote && $endsWithQuote) {
+            return $keyword;
+        }
+
+        return '"'.$keyword.'"';
+    }
+
+    private function generateEmbeddingAndIndex(Document $document): void
+    {
+        if (empty($document->content)) {
+            return;
+        }
+
+        try {
+            $embeddingService = app(EmbeddingService::class);
+            $embedding = $embeddingService->generateEmbedding($document->content);
+
+            if ($embedding) {
+                $document->update([
+                    'embedding' => json_encode($embedding),
+                ]);
+            }
+
+            $document->refresh();
+
+            $document->searchable();
+            Log::info('Document indexed to Meilisearch with manual content/embedding', [
+                'document_id' => $document->id,
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Failed to generate embedding or index document', [
+                'document_id' => $document->id,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+        }
+    }
+
+    private function isDescriptionOnlyMime(string $mimeType): bool
+    {
+        return in_array($mimeType, self::DESCRIPTION_ONLY_MIME_TYPES, true);
+    }
+
+    /**
+     * Get extraction status for a document.
+     */
+    public function extractionStatus(Document $document): JsonResponse
+    {
+        return response()->json([
+            'document_id' => $document->id,
+            'extraction_status' => $document->extraction_status,
+            'has_content' => ! empty($document->content),
+        ]);
     }
 }
