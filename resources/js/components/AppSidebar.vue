@@ -73,7 +73,11 @@ const navGroups: NavGroup[] = [
             <SidebarMenu>
                 <SidebarMenuItem>
                     <SidebarMenuButton size="lg" as-child>
-                        <Link :href="dashboard()">
+                        <Link
+                            :href="dashboard()"
+                            :preserve-state="false"
+                            :preserve-scroll="false"
+                        >
                             <AppLogo />
                         </Link>
                     </SidebarMenuButton>

@@ -1170,27 +1170,15 @@ const getAccessBorderClass = (access: string) => {
 }
 
 // ============================================================================
-// USER DIRECTORY
+// USER METADATA (from backend when available; fallback for display only)
 // ============================================================================
-const userDirectory: Record<string, { position: string; department: string }> = {
-  'Jennifer': { position: 'Admin', department: 'HR' },
-  'Jerick': { position: 'Administrator', department: 'Admin' },
-  'Jemiah': { position: 'Head Manager', department: 'HR' },
-  'Howard': { position: 'Recruitment Lead', department: 'HR' },
-  'Lance': { position: 'Training Coordinator', department: 'Legal' },
-  'Honey Grace': { position: 'Finance Manager', department: 'Finance' },
-  'Abby': { position: 'Legal Officer', department: 'Legal' },
-  'Vince': { position: 'Chief Operating Officer', department: 'Operations' },
-  'Angela': { position: 'Head Manager', department: 'HR' },
-  'Merliah': { position: 'HR Manager', department: 'HR' },
-}
-
 /**
- * Get user metadata (name, position, department)
+ * Get user metadata (name, position, department) for display.
+ * Uses fallback values when backend does not provide full user details.
  */
 const getUserMeta = (name: string, fallbackDept?: string) => {
-  const meta = userDirectory[name] || { position: 'Staff', department: fallbackDept || '—' }
-  return { name, position: meta.position, department: meta.department }
+  const department = fallbackDept || '—'
+  return { name: name || '—', position: 'Staff', department }
 }
 
 const getRequesterDepartmentCode = (request: any, fallbackCode?: string) => {

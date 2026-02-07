@@ -410,7 +410,7 @@ class AttendanceController extends Controller
      * Get late and absent counts for an employee
      *
      * @return array{late_count: int, absent_count: int}
-     */
+     */ 
     private function getLateAbsentCounts(int $employeeId): array
     {
         $now = $this->currentDate();
