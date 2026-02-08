@@ -1,7 +1,7 @@
 import '../css/app.css';
 import 'vue-sonner/style.css';
 
-import { createInertiaApp } from '@inertiajs/vue3';
+import { createInertiaApp, router } from '@inertiajs/vue3';
 import { resolvePageComponent } from 'laravel-vite-plugin/inertia-helpers';
 import type { DefineComponent } from 'vue';
 import { createApp, h } from 'vue';
@@ -55,6 +55,14 @@ createInertiaApp({
     progress: {
         color: '#4B5563',
     },
+});
+
+// Flush prefetch cache on every navigation so we always render fresh server data
+// instead of reusing previously prefetched (stale) responses.
+router.on('navigate', () => {
+    if (typeof router.flushAll === 'function') {
+        router.flushAll();
+    }
 });
 
 // This will set light / dark mode on page load...

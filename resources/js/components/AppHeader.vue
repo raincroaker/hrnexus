@@ -115,6 +115,9 @@ const rightNavItems: NavItem[] = [
                                         v-for="item in mainNavItems"
                                         :key="item.title"
                                         :href="item.href"
+                                        :preserve-state="false"
+                                        :preserve-scroll="false"
+                                        :prefetch="false"
                                         class="flex items-center gap-x-3 rounded-lg px-3 py-2 text-sm font-medium hover:bg-accent"
                                         :class="activeItemStyles(item.href)"
                                     >
@@ -148,7 +151,13 @@ const rightNavItems: NavItem[] = [
                     </Sheet>
                 </div>
 
-                <Link :href="dashboard()" class="flex items-center gap-x-2">
+                <Link
+                    :href="dashboard()"
+                    :preserve-state="false"
+                    :preserve-scroll="false"
+                    :prefetch="false"
+                    class="flex items-center gap-x-2"
+                >
                     <AppLogo />
                 </Link>
 
@@ -170,6 +179,9 @@ const rightNavItems: NavItem[] = [
                                         'h-9 cursor-pointer px-3',
                                     ]"
                                     :href="item.href"
+                                    :preserve-state="false"
+                                    :preserve-scroll="false"
+                                    :prefetch="false"
                                 >
                                     <component
                                         v-if="item.icon"

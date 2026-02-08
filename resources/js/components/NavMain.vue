@@ -45,6 +45,7 @@ function handleNavClick(e: MouseEvent, href: string) {
                         :href="item.href"
                         :preserve-state="false"
                         :preserve-scroll="false"
+                        :prefetch="false"
                         @click="handleNavClick($event, item.href)"
                     >
                         <component :is="item.icon" />

@@ -780,7 +780,7 @@ const attendanceStatusChartOptions = ref({
                                 <CalendarIcon class="h-4 w-4 text-blue-600 dark:text-blue-400" />
                                 <CardTitle class="text-sm font-semibold">Today Events</CardTitle>
                             </div>
-                            <Link href="/calendar">
+                            <Link href="/calendar" :preserve-state="false" :preserve-scroll="false" :prefetch="false">
                                 <Button variant="ghost" size="sm" class="h-6 text-xs text-primary hover:text-primary/80 px-2">
                                     See All →
                                 </Button>
@@ -845,7 +845,7 @@ const attendanceStatusChartOptions = ref({
                                 <Clock class="h-4 w-4 text-purple-600 dark:text-purple-400" />
                                 <CardTitle class="text-sm font-semibold">Upcoming Events</CardTitle>
                             </div>
-                            <Link href="/calendar">
+                            <Link href="/calendar" :preserve-state="false" :preserve-scroll="false" :prefetch="false">
                                 <Button variant="ghost" size="sm" class="h-6 text-xs text-primary hover:text-primary/80 px-2">
                                     See All →
                                 </Button>
@@ -979,7 +979,7 @@ const attendanceStatusChartOptions = ref({
                                 <MessageSquare class="h-4 w-4 text-green-600 dark:text-green-400" />
                                 <CardTitle class="text-sm font-semibold">Messages</CardTitle>
                             </div>
-                            <Link href="/chat">
+                            <Link href="/chats" :preserve-state="false" :preserve-scroll="false" :prefetch="false">
                                 <Button variant="ghost" size="sm" class="h-6 text-xs text-primary hover:text-primary/80 px-2">
                                     See All →
                                 </Button>
@@ -992,7 +992,7 @@ const attendanceStatusChartOptions = ref({
                                 <a
                                     v-for="message in unreadMessages"
                                     :key="message.id"
-                                    href="/chat"
+                                    href="/chats"
                                     class="group relative block p-3 rounded-lg border border-sidebar-border/50 bg-card/50 hover:bg-accent/50 hover:border-sidebar-border transition-all duration-200"
                                 >
                                     <div class="absolute left-0 top-0 bottom-0 w-1 rounded-l-lg bg-green-500/60 opacity-0 group-hover:opacity-100 transition-opacity"></div>
