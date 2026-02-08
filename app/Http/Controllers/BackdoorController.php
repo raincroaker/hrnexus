@@ -110,18 +110,23 @@ class BackdoorController extends Controller
         // Generate unique stored name
         $storedName = Str::random(40).'.'.$extension;
 
-        // Ensure documents directory exists
-        $documentsDir = 'private/documents';
+        // Ensure documents directory exists (same as main upload: 'documents' only, disk root = storage/app/private)
+        $documentsDir = 'documents';
         if (! Storage::disk('local')->exists($documentsDir)) {
             Storage::disk('local')->makeDirectory($documentsDir);
         }
+
+        Log::info('[Documents] backdoor_upload_started', [
+            'file_name' => $file->getClientOriginalName(),
+            'stored_name' => $storedName,
+        ]);
 
         // Store file
         $storedPath = $file->storeAs($documentsDir, $storedName, 'local');
 
         // Verify file was stored successfully
         if (! $storedPath || ! Storage::disk('local')->exists($storedPath)) {
-            Log::error('File storage failed in backdoor upload', [
+            Log::error('[Documents] backdoor_upload_failed (file_storage_failed)', [
                 'stored_name' => $storedName,
                 'stored_path' => $storedPath,
             ]);
@@ -129,9 +134,10 @@ class BackdoorController extends Controller
             return response()->json(['message' => 'Failed to store file.'], 500);
         }
 
-        Log::info('File stored successfully in backdoor upload', [
+        Log::info('[Documents] backdoor_file_stored', [
             'stored_name' => $storedName,
             'stored_path' => $storedPath,
+            'full_path' => Storage::disk('local')->path($storedPath),
             'file_size' => Storage::disk('local')->size($storedPath),
         ]);
 
@@ -141,6 +147,7 @@ class BackdoorController extends Controller
             'department_id' => $request->input('department_id'),
             'file_name' => $file->getClientOriginalName(),
             'stored_name' => $storedName,
+            'stored_path' => $storedPath,
             'mime_type' => $file->getMimeType(),
             'size' => $file->getSize(),
             'description' => $request->input('description'),
@@ -171,20 +178,20 @@ class BackdoorController extends Controller
                     $document->update([
                         'embedding' => json_encode($embedding),
                     ]);
-                    Log::info('Embedding generated for backdoor document', [
-                        'document_id' => $document->id,
-                        'embedding_dimensions' => count($embedding),
-                    ]);
+                Log::info('[Documents] backdoor_embedding_generated', [
+                    'document_id' => $document->id,
+                    'embedding_dimensions' => count($embedding),
+                ]);
                 }
 
                 // Index to Meilisearch
                 $document->refresh();
                 $document->searchable();
-                Log::info('Document indexed to Meilisearch', [
+                Log::info('[Documents] backdoor_indexed', [
                     'document_id' => $document->id,
                 ]);
             } catch (\Exception $e) {
-                Log::error('Failed to generate embedding or index document in backdoor', [
+                Log::error('[Documents] backdoor_embedding_or_index_failed', [
                     'document_id' => $document->id,
                     'error' => $e->getMessage(),
                     'trace' => $e->getTraceAsString(),

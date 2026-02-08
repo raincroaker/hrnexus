@@ -216,6 +216,12 @@ class DocumentsController extends Controller
         $file = $request->file('file');
         $extension = strtolower($file->getClientOriginalExtension());
 
+        Log::info('[Documents] upload_started', [
+            'file_name' => $file->getClientOriginalName(),
+            'mime_type' => $file->getMimeType(),
+            'size' => $file->getSize(),
+        ]);
+
         // Generate unique stored name
         $storedName = Str::random(40).'.'.$extension;
 
@@ -230,7 +236,7 @@ class DocumentsController extends Controller
 
         // Verify file was stored successfully
         if (! $storedPath || ! Storage::disk('local')->exists($storedPath)) {
-            Log::error('File storage failed', [
+            Log::error('[Documents] upload_failed (file_storage_failed)', [
                 'stored_name' => $storedName,
                 'stored_path' => $storedPath,
                 'documents_dir' => $documentsDir,
@@ -241,9 +247,9 @@ class DocumentsController extends Controller
             return response()->json(['message' => 'Failed to store file.'], 500);
         }
 
-        Log::info('File stored successfully', [
+        Log::info('[Documents] file_stored', [
             'stored_name' => $storedName,
-            'stored_path' => $storedPath, // This is what storeAs returns - use this exact path!
+            'stored_path' => $storedPath,
             'documents_dir' => $documentsDir,
             'file_size' => Storage::disk('local')->size($storedPath),
             'full_path' => Storage::disk('local')->path($storedPath),
@@ -313,7 +319,7 @@ class DocumentsController extends Controller
 
             // Verify file exists before dispatching job
             if (! Storage::disk('local')->exists($filePath)) {
-                Log::error('File not found before dispatching extraction job', [
+                Log::error('[Documents] upload_failed (file_not_found_before_dispatch)', [
                     'document_id' => $document->id,
                     'stored_name' => $document->stored_name,
                     'file_path' => $filePath,
@@ -329,7 +335,7 @@ class DocumentsController extends Controller
                 ], 500);
             }
 
-            Log::info('Dispatching extraction job for approved PDF document', [
+            Log::info('[Documents] extraction_job_dispatched', [
                 'document_id' => $document->id,
                 'file_name' => $document->file_name,
                 'mime_type' => $document->mime_type,

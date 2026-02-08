@@ -31,7 +31,7 @@ class ExtractPdfContentJob implements ShouldQueue
         $document = Document::find($this->documentId);
 
         if (! $document) {
-            Log::warning('Document not found for extraction job', [
+            Log::warning('[Extraction] job_result: skipped (document_not_found)', [
                 'document_id' => $this->documentId,
             ]);
 
@@ -46,7 +46,7 @@ class ExtractPdfContentJob implements ShouldQueue
 
         // Only process approved documents
         if ($document->status !== 'approved') {
-            Log::info('Document is not approved, skipping extraction', [
+            Log::info('[Extraction] job_result: skipped (document_not_approved)', [
                 'document_id' => $document->id,
                 'status' => $document->status,
             ]);
@@ -58,7 +58,7 @@ class ExtractPdfContentJob implements ShouldQueue
             // Update status to processing
             $document->update(['extraction_status' => 'processing']);
 
-            Log::info('Starting document extraction job', [
+            Log::info('[Extraction] job_started', [
                 'document_id' => $document->id,
                 'file_name' => $document->file_name,
                 'mime_type' => $document->mime_type,
@@ -71,7 +71,7 @@ class ExtractPdfContentJob implements ShouldQueue
 
             if ($extractedContent) {
                 // Generate embedding
-                Log::info('Generating embedding for extracted content', [
+                Log::info('[Extraction] step: generating_embedding', [
                     'document_id' => $document->id,
                 ]);
 
@@ -86,19 +86,19 @@ class ExtractPdfContentJob implements ShouldQueue
 
                 if ($embedding) {
                     $updateData['embedding'] = json_encode($embedding);
-                    Log::info('Embedding generated and will be saved', [
+                    Log::info('[Extraction] step: embedding_saved', [
                         'document_id' => $document->id,
                         'embedding_dimensions' => count($embedding),
                     ]);
                 } else {
-                    Log::warning('Embedding generation failed, saving without embedding', [
+                    Log::warning('[Extraction] step: embedding_failed_saving_without', [
                         'document_id' => $document->id,
                     ]);
                 }
 
                 $document->update($updateData);
 
-                Log::info('Content and embedding extracted, document updated', [
+                Log::info('[Extraction] step: document_updated', [
                     'document_id' => $document->id,
                     'content_length' => strlen($extractedContent),
                     'has_embedding' => ! empty($embedding),
@@ -110,14 +110,14 @@ class ExtractPdfContentJob implements ShouldQueue
                 // Index to Meilisearch using Scout (includes embedding as _vectors)
                 try {
                     $document->searchable();
-                    Log::info('Document indexed to Meilisearch with content and embedding', [
+                    Log::info('[Extraction] job_result: success (indexed)', [
                         'document_id' => $document->id,
                     ]);
 
                     // Broadcast extraction completed event (admin only)
                     PdfExtractionCompleted::dispatch($document);
                 } catch (\Exception $e) {
-                    Log::error('Failed to index document to Meilisearch', [
+                    Log::error('[Extraction] job_result: failed (meilisearch_index_error)', [
                         'document_id' => $document->id,
                         'error' => $e->getMessage(),
                         'trace' => $e->getTraceAsString(),
@@ -126,14 +126,15 @@ class ExtractPdfContentJob implements ShouldQueue
             } else {
                 // Extraction failed or returned empty
                 $document->update(['extraction_status' => 'failed']);
-                Log::warning('Content extraction returned empty, document not indexed', [
+                Log::warning('[Extraction] job_result: empty (content_extraction_returned_empty)', [
                     'document_id' => $document->id,
+                    'hint' => 'Check the last [Extraction] result: log above for the exact reason (file_not_found, empty_extracted_text, etc.)',
                 ]);
             }
         } catch (\Exception $e) {
             // Update status to failed
             $document->update(['extraction_status' => 'failed']);
-            Log::error('PDF extraction job failed', [
+            Log::error('[Extraction] job_result: failed (exception)', [
                 'document_id' => $document->id,
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString(),
