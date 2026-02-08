@@ -26,7 +26,7 @@ function handleNavClick(e: MouseEvent, href: string) {
     const target = href.split('?')[0];
     if (current === target) {
         e.preventDefault();
-        router.reload({ preserveScroll: false });
+        router.reload();
     }
 }
 </script>

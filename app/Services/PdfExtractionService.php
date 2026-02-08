@@ -11,6 +11,16 @@ class PdfExtractionService
 {
     private const PDF_MIME_TYPE = 'application/pdf';
 
+    /** Print to console when running queue:work so you can see what's happening. */
+    private function console(string $message, array $context = []): void
+    {
+        $line = '[Extraction] '.$message;
+        if ($context !== []) {
+            $line .= ' '.json_encode($context);
+        }
+        error_log($line);
+    }
+
     /**
      * Extract text content from documents using OpenAI GPT-5 (latest model).
      * Supports PDF, Word (DOCX), and PowerPoint (PPTX) files directly.
@@ -19,44 +29,66 @@ class PdfExtractionService
      */
     public function extractText(Document $document): ?string
     {
-        Log::info('Starting document text extraction', [
-            'document_id' => $document->id,
-            'file_name' => $document->file_name,
-            'mime_type' => $document->mime_type,
-        ]);
+        $logCtx = ['document_id' => $document->id, 'file_name' => $document->file_name, 'mime_type' => $document->mime_type];
+
+        Log::info('Extraction step: start', $logCtx);
+        $this->console('START', ['doc_id' => $document->id, 'file' => $document->file_name]);
 
         try {
-            // Check if file type is supported by OpenAI Files API
             if (! $this->isSupportedFileType($document->mime_type)) {
-                Log::info('Document mime type not supported for extraction', [
-                    'document_id' => $document->id,
-                    'mime_type' => $document->mime_type,
-                ]);
+                Log::warning('Extraction step: mime_type_not_supported', array_merge($logCtx, ['mime_type' => $document->mime_type]));
+                $this->console('SKIP mime_type_not_supported', ['mime_type' => $document->mime_type]);
 
                 return null;
             }
 
-            // Get the file path
-            $filePath = 'private/documents/'.$document->stored_name;
+            // Use stored_path from DB (relative to disk root). Fallback for older records.
+            $filePath = $document->stored_path ?? 'documents/'.$document->stored_name;
+            if (! Storage::disk('local')->exists($filePath) && $document->stored_name) {
+                $filePath = 'documents/'.$document->stored_name;
+            }
             $fullPath = Storage::disk('local')->path($filePath);
+            $diskRoot = Storage::disk('local')->path('');
+
+            Log::info('Extraction step: path resolved', array_merge($logCtx, [
+                'relative_path' => $filePath,
+                'full_path' => $fullPath,
+                'disk_root' => $diskRoot,
+            ]));
 
             if (! Storage::disk('local')->exists($filePath)) {
-                Log::error('Document file not found in storage', [
-                    'document_id' => $document->id,
-                    'file_path' => $filePath,
-                ]);
+                Log::error('Extraction step: file_not_found', array_merge($logCtx, [
+                    'relative_path' => $filePath,
+                    'full_path' => $fullPath,
+                    'disk_root' => $diskRoot,
+                ]));
+                $this->console('FAIL file_not_found', ['path' => $filePath, 'full' => $fullPath]);
 
                 return null;
             }
 
+            if (! is_readable($fullPath)) {
+                Log::error('Extraction step: file_not_readable', array_merge($logCtx, [
+                    'path' => $fullPath,
+                    'hint' => 'Check permissions and queue worker user',
+                ]));
+                $this->console('FAIL file_not_readable', ['path' => $fullPath]);
+
+                return null;
+            }
+
+            Log::info('Extraction step: calling extractTextFromFile', $logCtx);
+            $this->console('file found, calling OpenAI...', ['path' => $filePath]);
+
             return $this->extractTextFromFile($fullPath, $document);
-        } catch (\Exception $e) {
-            Log::error('Document text extraction failed', [
-                'document_id' => $document->id,
-                'mime_type' => $document->mime_type,
+        } catch (\Throwable $e) {
+            Log::error('Extraction step: exception_in_extractText', array_merge($logCtx, [
                 'error' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
                 'trace' => $e->getTraceAsString(),
-            ]);
+            ]));
+            $this->console('EXCEPTION', ['error' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine()]);
 
             return null;
         }
@@ -84,90 +116,106 @@ class PdfExtractionService
      */
     private function extractTextFromFile(string $filePath, Document $document): ?string
     {
+        $logCtx = ['document_id' => $document->id, 'file_path' => $filePath];
+        $fileId = null;
+
         try {
-            // Step 1: Upload file to OpenAI Files API
-            Log::info('Uploading file to OpenAI Files API', [
-                'document_id' => $document->id,
-                'file_path' => $filePath,
-                'mime_type' => $document->mime_type,
+            Log::info('Extraction step: open_local_file', $logCtx);
+
+            $handle = @fopen($filePath, 'r');
+            if ($handle === false) {
+                Log::error('Extraction step: fopen_failed', array_merge($logCtx, [
+                    'path' => $filePath,
+                    'hint' => 'Permission denied or path wrong?',
+                ]));
+                $this->console('FAIL fopen_failed', ['path' => $filePath]);
+
+                return null;
+            }
+
+            Log::info('Extraction step: upload_to_openai', array_merge($logCtx, [
                 'file_size' => filesize($filePath),
-            ]);
-
-            $file = OpenAI::files()->upload([
-                'purpose' => 'assistants',
-                'file' => fopen($filePath, 'r'),
-            ]);
-
-            $fileId = $file->id;
-            Log::info('File uploaded to OpenAI', [
-                'document_id' => $document->id,
-                'openai_file_id' => $fileId,
                 'mime_type' => $document->mime_type,
-            ]);
+            ]));
+
+            try {
+                $file = OpenAI::files()->upload([
+                    'purpose' => 'assistants',
+                    'file' => $handle,
+                ]);
+                $fileId = $file->id;
+            } catch (\Throwable $e) {
+                if (is_resource($handle)) {
+                    fclose($handle);
+                }
+                Log::error('Extraction step: openai_upload_failed', array_merge($logCtx, [
+                    'error' => $e->getMessage(),
+                    'trace' => $e->getTraceAsString(),
+                ]));
+                $this->console('FAIL openai_upload_failed', ['error' => $e->getMessage()]);
+
+                return null;
+            }
+            if (is_resource($handle)) {
+                fclose($handle);
+            }
+
+            Log::info('Extraction step: openai_upload_ok', array_merge($logCtx, ['openai_file_id' => $fileId]));
+            $this->console('upload_ok', ['openai_file_id' => $fileId]);
 
             // Step 2: Wait for file to be processed (polling)
+            Log::info('Extraction step: poll_openai_status', array_merge($logCtx, ['openai_file_id' => $fileId]));
+
             $maxAttempts = 30;
             $attempt = 0;
             $fileStatus = 'uploaded';
 
             while ($fileStatus !== 'processed' && $attempt < $maxAttempts) {
-                sleep(2); // Wait 2 seconds between checks
+                sleep(2);
                 $attempt++;
 
-                $fileInfo = OpenAI::files()->retrieve($fileId);
-                $fileStatus = $fileInfo->status;
+                try {
+                    $fileInfo = OpenAI::files()->retrieve($fileId);
+                    $fileStatus = $fileInfo->status;
+                } catch (\Throwable $e) {
+                    Log::error('Extraction step: openai_retrieve_failed', array_merge($logCtx, [
+                        'openai_file_id' => $fileId,
+                        'attempt' => $attempt,
+                        'error' => $e->getMessage(),
+                    ]));
+                    $this->deleteOpenAiFile($fileId, $logCtx);
 
-                Log::info('Checking file processing status', [
-                    'document_id' => $document->id,
+                    return null;
+                }
+
+                Log::info('Extraction step: openai_status', array_merge($logCtx, [
                     'openai_file_id' => $fileId,
                     'status' => $fileStatus,
                     'attempt' => $attempt,
-                ]);
+                ]));
 
                 if ($fileStatus === 'error') {
-                    Log::error('OpenAI file processing failed', [
-                        'document_id' => $document->id,
-                        'openai_file_id' => $fileId,
-                    ]);
-
-                    // Clean up: delete the file from OpenAI
-                    try {
-                        OpenAI::files()->delete($fileId);
-                    } catch (\Exception $e) {
-                        Log::warning('Failed to delete OpenAI file', [
-                            'openai_file_id' => $fileId,
-                            'error' => $e->getMessage(),
-                        ]);
-                    }
+                    Log::error('Extraction step: openai_file_status_error', array_merge($logCtx, ['openai_file_id' => $fileId]));
+                    $this->console('FAIL openai_file_status_error', ['openai_file_id' => $fileId]);
+                    $this->deleteOpenAiFile($fileId, $logCtx);
 
                     return null;
                 }
             }
 
             if ($fileStatus !== 'processed') {
-                Log::error('OpenAI file processing timeout', [
-                    'document_id' => $document->id,
+                Log::error('Extraction step: openai_poll_timeout', array_merge($logCtx, [
                     'openai_file_id' => $fileId,
                     'attempts' => $attempt,
-                ]);
-
-                // Clean up: delete the file from OpenAI
-                try {
-                    OpenAI::files()->delete($fileId);
-                } catch (\Exception $e) {
-                    Log::warning('Failed to delete OpenAI file', [
-                        'openai_file_id' => $fileId,
-                        'error' => $e->getMessage(),
-                    ]);
-                }
+                ]));
+                $this->console('FAIL openai_poll_timeout', ['attempts' => $attempt]);
+                $this->deleteOpenAiFile($fileId, $logCtx);
 
                 return null;
             }
 
-            Log::info('File processed, extracting text with GPT-4o (latest model)', [
-                'document_id' => $document->id,
-                'openai_file_id' => $fileId,
-            ]);
+            Log::info('Extraction step: openai_processed_ok', array_merge($logCtx, ['openai_file_id' => $fileId]));
+            $this->console('file processed, calling chat...', ['openai_file_id' => $fileId]);
 
             // Step 3: Use GPT-5 (latest model) to extract detailed summary and keywords
             $extractionPrompt = <<<'PROMPT'
@@ -217,74 +265,116 @@ PROMPT;
                 ]);
             };
 
-            // Try gpt-5-2025-08-07 first
+            // Step 3: Chat completion to extract text
+            Log::info('Extraction step: chat_completion', array_merge($logCtx, ['openai_file_id' => $fileId]));
+
+            $coerceContent = function ($raw) {
+                if ($raw === null) {
+                    return null;
+                }
+                return is_string($raw) ? $raw : (string) $raw;
+            };
+
             try {
                 $response = $createRequest('gpt-5-2025-08-07');
-                $extractedText = $response->choices[0]->message->content ?? null;
-                Log::info('Successfully used gpt-5-2025-08-07 model', [
-                    'document_id' => $document->id,
-                ]);
-            } catch (\Exception $e) {
-                // If gpt-5-2025-08-07 fails, try gpt-5
-                Log::warning('GPT-5-2025-08-07 model not available, trying gpt-5', [
-                    'document_id' => $document->id,
-                    'error' => $e->getMessage(),
-                ]);
-
+                $extractedText = $coerceContent($response->choices[0]->message->content ?? null);
+                Log::info('Extraction step: chat_ok', array_merge($logCtx, ['model' => 'gpt-5-2025-08-07']));
+            } catch (\Throwable $e) {
+                Log::warning('Extraction step: gpt5_fallback', array_merge($logCtx, ['error' => $e->getMessage()]));
                 try {
                     $response = $createRequest('gpt-5');
-                    $extractedText = $response->choices[0]->message->content ?? null;
-                    Log::info('Successfully used gpt-5 model', [
-                        'document_id' => $document->id,
-                    ]);
-                } catch (\Exception $e2) {
-                    // Final fallback to gpt-4o
-                    Log::warning('GPT-5 model not available, falling back to gpt-4o', [
-                        'document_id' => $document->id,
-                        'error' => $e2->getMessage(),
-                    ]);
+                    $extractedText = $coerceContent($response->choices[0]->message->content ?? null);
+                    Log::info('Extraction step: chat_ok', array_merge($logCtx, ['model' => 'gpt-5']));
+                } catch (\Throwable $e2) {
+                    Log::warning('Extraction step: gpt4o_fallback', array_merge($logCtx, ['error' => $e2->getMessage()]));
+                    try {
+                        $response = $createRequest('gpt-4o');
+                        $extractedText = $coerceContent($response->choices[0]->message->content ?? null);
+                        Log::info('Extraction step: chat_ok', array_merge($logCtx, ['model' => 'gpt-4o']));
+                    } catch (\Throwable $e3) {
+                        Log::error('Extraction step: chat_completion_failed', array_merge($logCtx, [
+                            'error' => $e3->getMessage(),
+                            'trace' => $e3->getTraceAsString(),
+                        ]));
+                        $this->console('FAIL chat_completion_failed', ['error' => $e3->getMessage()]);
+                        $this->deleteOpenAiFile($fileId, $logCtx);
 
-                    $response = $createRequest('gpt-4o');
-                    $extractedText = $response->choices[0]->message->content ?? null;
+                        return null;
+                    }
                 }
             }
 
-            if (empty($extractedText)) {
-                Log::warning('No text extracted from PDF', [
-                    'document_id' => $document->id,
-                    'openai_file_id' => $fileId,
-                ]);
+            $hasUsableContent = is_string($extractedText) && trim($extractedText) !== '';
+            $extractedLen = $hasUsableContent ? strlen($extractedText) : 0;
+            Log::info('Extraction step: post_chat', array_merge($logCtx, [
+                'openai_file_id' => $fileId,
+                'extracted_length' => $extractedLen,
+            ]));
+            $this->console('post_chat', ['extracted_length' => $extractedLen]);
+
+            if (! $hasUsableContent) {
+                $diag = array_merge($logCtx, ['openai_file_id' => $fileId]);
+                try {
+                    $resp = $response ?? null;
+                    if ($resp !== null && isset($resp->choices) && is_array($resp->choices) && isset($resp->choices[0])) {
+                        $c0 = $resp->choices[0];
+                        $diag['finish_reason'] = $c0->finishReason ?? 'n/a';
+                        $msg = $c0->message ?? null;
+                        if ($msg !== null && isset($msg->content)) {
+                            $raw = $msg->content;
+                            $diag['content_type'] = gettype($raw);
+                            if (is_string($raw)) {
+                                $diag['content_len'] = strlen($raw);
+                                $diag['preview'] = substr($raw, 0, 150);
+                            }
+                        }
+                    }
+                } catch (\Throwable $e) {
+                    $diag['diag_error'] = $e->getMessage();
+                }
+                Log::warning('Extraction step: empty_extracted_text', $diag);
+                $this->console('EMPTY content', ['finish_reason' => $diag['finish_reason'] ?? 'n/a', 'content_type' => $diag['content_type'] ?? 'n/a']);
             } else {
-                Log::info('Text extraction successful', [
-                    'document_id' => $document->id,
+                Log::info('Extraction step: extraction_done', array_merge($logCtx, [
                     'openai_file_id' => $fileId,
-                    'text_length' => strlen($extractedText),
-                ]);
+                    'text_length' => is_string($extractedText) ? strlen($extractedText) : 0,
+                ]));
+                $this->console('OK extraction_done', ['text_length' => is_string($extractedText) ? strlen($extractedText) : 0]);
             }
 
-            // Clean up: delete the file from OpenAI
-            try {
-                OpenAI::files()->delete($fileId);
-                Log::info('OpenAI file deleted', [
-                    'document_id' => $document->id,
-                    'openai_file_id' => $fileId,
-                ]);
-            } catch (\Exception $e) {
-                Log::warning('Failed to delete OpenAI file', [
-                    'openai_file_id' => $fileId,
-                    'error' => $e->getMessage(),
-                ]);
-            }
+            $this->deleteOpenAiFile($fileId, $logCtx);
 
-            return $extractedText ? trim($extractedText) : null;
-        } catch (\Exception $e) {
-            Log::error('PDF text extraction failed', [
-                'document_id' => $document->id,
+            return is_string($extractedText) && trim($extractedText) !== '' ? trim($extractedText) : null;
+        } catch (\Throwable $e) {
+            Log::error('Extraction step: exception_in_extractTextFromFile', array_merge($logCtx, [
+                'openai_file_id' => $fileId,
                 'error' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
                 'trace' => $e->getTraceAsString(),
-            ]);
+            ]));
+            $this->console('EXCEPTION in extractTextFromFile', ['error' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine()]);
+            if ($fileId !== null) {
+                $this->deleteOpenAiFile($fileId, $logCtx);
+            }
 
             return null;
+        }
+    }
+
+    private function deleteOpenAiFile(?string $fileId, array $logCtx): void
+    {
+        if ($fileId === null) {
+            return;
+        }
+        try {
+            OpenAI::files()->delete($fileId);
+            Log::info('Extraction step: openai_file_deleted', array_merge($logCtx, ['openai_file_id' => $fileId]));
+        } catch (\Throwable $e) {
+            Log::warning('Extraction step: openai_file_delete_failed', array_merge($logCtx, [
+                'openai_file_id' => $fileId,
+                'error' => $e->getMessage(),
+            ]));
         }
     }
 }

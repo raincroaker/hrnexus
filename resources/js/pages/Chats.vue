@@ -229,8 +229,6 @@ const apiSendMessage = async (chatId: number, content: string, files: File[] = [
     
     return new Promise<void>((resolve, reject) => {
         router.post(`/chats/${chatId}/messages`, formData, {
-            preserveScroll: true,
-            preserveState: true,
             forceFormData: true,
             onSuccess: () => {
                 resolve();
@@ -257,7 +255,6 @@ const apiCreateGroupChat = async (name: string, memberIds: number[], description
     
     return new Promise<void>((resolve, reject) => {
         router.post('/chats', payload, {
-            preserveScroll: true,
             onSuccess: () => {
                 resolve();
             },
@@ -280,7 +277,6 @@ const apiAddMembers = async (chatId: number, memberIds: number[]) => {
     
     return new Promise<void>((resolve, reject) => {
         router.post(`/chats/${chatId}/members`, payload, {
-            preserveScroll: true,
             onSuccess: () => {
                 resolve();
             },
@@ -299,7 +295,6 @@ const apiAddMembers = async (chatId: number, memberIds: number[]) => {
 const apiRemoveMember = async (chatId: number, memberId: number) => {
     return new Promise<void>((resolve, reject) => {
         router.delete(`/chats/${chatId}/members/${memberId}`, {
-            preserveScroll: true,
             onSuccess: () => {
                 resolve();
             },
@@ -318,7 +313,6 @@ const apiRemoveMember = async (chatId: number, memberId: number) => {
 const apiSetAsAdmin = async (chatId: number, memberId: number) => {
     return new Promise<void>((resolve, reject) => {
         router.post(`/chats/${chatId}/members/${memberId}/admin`, {}, {
-            preserveScroll: true,
             onSuccess: () => {
                 resolve();
             },
@@ -337,7 +331,6 @@ const apiSetAsAdmin = async (chatId: number, memberId: number) => {
 const apiRemoveAdminStatus = async (chatId: number, memberId: number) => {
     return new Promise<void>((resolve, reject) => {
         router.delete(`/chats/${chatId}/members/${memberId}/admin`, {
-            preserveScroll: true,
             onSuccess: () => {
                 resolve();
             },
@@ -360,7 +353,6 @@ const apiRenameChat = async (chatId: number, name: string) => {
     
     return new Promise<void>((resolve, reject) => {
         router.patch(`/chats/${chatId}`, payload, {
-            preserveScroll: true,
             onSuccess: () => {
                 resolve();
             },
@@ -378,7 +370,6 @@ const apiRenameChat = async (chatId: number, name: string) => {
 const apiLeaveChat = async (chatId: number) => {
     return new Promise<void>((resolve, reject) => {
         router.delete(`/chats/${chatId}/leave`, {
-            preserveScroll: true,
             onSuccess: () => {
                 resolve();
             },
@@ -400,7 +391,6 @@ const apiPinChat = async (chatId: number) => {
     
     return new Promise<void>((resolve, reject) => {
         router.patch(`/chats/${chatId}/pin`, payload, {
-            preserveScroll: true,
             onSuccess: () => {
                 resolve();
             },
@@ -422,7 +412,6 @@ const apiUnpinChat = async (chatId: number) => {
     
     return new Promise<void>((resolve, reject) => {
         router.patch(`/chats/${chatId}/pin`, payload, {
-            preserveScroll: true,
             onSuccess: () => {
                 resolve();
             },
@@ -445,8 +434,6 @@ const apiPinMessage = async (chatId: number, messageId: number) => {
     
     return new Promise<void>((resolve, reject) => {
         router.patch(`/chats/${chatId}/messages/${messageId}/pin`, payload, {
-            preserveScroll: true,
-            preserveState: true,
             onSuccess: () => {
                 resolve();
             },
@@ -469,8 +456,6 @@ const apiUnpinMessage = async (chatId: number, messageId: number) => {
     
     return new Promise<void>((resolve, reject) => {
         router.patch(`/chats/${chatId}/messages/${messageId}/pin`, payload, {
-            preserveScroll: true,
-            preserveState: true,
             onSuccess: () => {
                 resolve();
             },
@@ -498,8 +483,6 @@ const apiToggleSeenStatus = async (chatId: number, isSeen: boolean) => {
     
     return new Promise<void>((resolve, reject) => {
         router.patch(`/chats/${chatId}/seen`, payload, {
-            preserveScroll: true,
-            preserveState: true, // Preserve component state to keep selectedChat
             onStart: () => {
                 console.log('[apiToggleSeenStatus] Request started');
                 console.log('[apiToggleSeenStatus] selectedChat during start:', selectedChat.value?.id);
@@ -2006,8 +1989,6 @@ const saveEditMessage = async () => {
         
         await new Promise<void>((resolve, reject) => {
             router.patch(`/chats/${chatId}/messages/${messageId}`, payload, {
-                preserveScroll: true,
-                preserveState: true,
                 onSuccess: () => {
                     resolve();
                 },
@@ -2127,8 +2108,6 @@ const deleteMessage = async () => {
     try {
         await new Promise<void>((resolve, reject) => {
             router.delete(`/chats/${chatId}/messages/${messageId}`, {
-                preserveScroll: true,
-                preserveState: true,
                 onSuccess: () => {
                     resolve();
                 },
@@ -2180,8 +2159,6 @@ const restoreMessage = async (message: any) => {
     try {
         await new Promise<void>((resolve, reject) => {
             router.patch(`/chats/${chatId}/messages/${messageId}/restore`, {}, {
-                preserveScroll: true,
-                preserveState: true,
                 onSuccess: () => {
                     resolve();
                 },

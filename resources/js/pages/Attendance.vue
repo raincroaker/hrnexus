@@ -1478,7 +1478,7 @@ const applyDTRFilter = () => {
     const start = `${year}-${String(month).padStart(2, '0')}-01`;
     const lastDay = new Date(year, month, 0).getDate();
     const end = `${year}-${String(month).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
-    router.get('/attendance', { start_date: start, end_date: end, my_attendance_page: 1 }, { preserveState: true });
+    router.get('/attendance', { start_date: start, end_date: end, my_attendance_page: 1 });
 };
 
 // All employees attendance table (My Attendance tab, admin only): filters and pagination
@@ -1510,7 +1510,7 @@ const applyTeamTableFilter = () => {
         params.team_start_date = `${y}-${m}-01`;
         params.team_end_date = todayStr;
     }
-    router.get('/attendance', params, { preserveState: true });
+    router.get('/attendance', params);
 };
 
 const teamTableMeta = computed(() => props.teamAttendance?.meta ?? { current_page: 1, last_page: 1, per_page: 15, total: 0, from: null, to: null });
@@ -1528,7 +1528,7 @@ const goToTeamTablePage = (page: number) => {
     };
     params.team_start_date = (props.teamTableStartDate ?? todayStr).toString();
     params.team_end_date = (props.teamTableEndDate ?? todayStr).toString();
-    router.get('/attendance', params, { preserveState: true });
+    router.get('/attendance', params);
 };
 
 // Sync team table filter state from props (e.g. after apply or page load)
@@ -1582,7 +1582,7 @@ const goToDTRPage = (page: number) => {
     const params: Record<string, string | number> = { my_attendance_page: page };
     if (props.dtrStartDate) params.start_date = props.dtrStartDate;
     if (props.dtrEndDate) params.end_date = props.dtrEndDate;
-    router.get('/attendance', params, { preserveState: true });
+    router.get('/attendance', params);
 };
 
 // Sync DTR filter dropdowns from props (current period)

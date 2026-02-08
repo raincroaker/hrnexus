@@ -66,7 +66,7 @@ onMounted(async () => {
                     v-if="isRecoveryCodesVisible && recoveryCodesList.length"
                     v-bind="regenerateRecoveryCodes.form()"
                     method="post"
-                    :options="{ preserveScroll: true }"
+                    :options="{}"
                     @success="fetchRecoveryCodes"
                     #default="{ processing }"
                 >

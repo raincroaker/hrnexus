@@ -268,7 +268,13 @@ watch(requestDownloadConfirmOpen, (isOpen) => {
 })
 
 const openFileViewer = (file: any) => {
-  // Open document details dialog instead
+  // Don't open deleted/non-existent docs (e.g. stale search results)
+  const docIds = new Set((props.documents || []).map((d: any) => d.id))
+  if (file?.id != null && !docIds.has(file.id)) {
+    smartSearchResults.value = smartSearchResults.value.filter((r: any) => r.id !== file.id)
+    toast.error('This document no longer exists and was removed from search results.')
+    return
+  }
   selectedDocumentForDetails.value = file
   documentDetailsOpen.value = true
 }
@@ -546,6 +552,11 @@ const smartSearchDialogOpen = ref(false)
 const smartSearchQuery = ref('')
 const smartSearchLoading = ref(false)
 const smartSearchResults = ref<any[]>([])
+// Only show search results that still exist in the current document list (avoids showing deleted/non-existent docs)
+const visibleSearchResults = computed(() => {
+  const docIds = new Set((props.documents || []).map((d: any) => d.id))
+  return smartSearchResults.value.filter((r: any) => docIds.has(r.id))
+})
 // UI only: allow user to pick between Keyword vs Context search modes.
 // Both modes currently use the same underlying keyword search logic.
 const smartSearchMode = ref<'keywords' | 'context'>('keywords')
@@ -598,12 +609,10 @@ const performKeywordSearch = async (query: string) => {
     })
 
     const results = response.data.results || []
-    
+    // Exclude any deleted documents (backend also filters; this is a safety net)
+    const nonDeleted = results.filter((doc: any) => !doc.deleted_at)
     // Transform results to match All Files tab format using transformDocument
-    const transformedResults = results.map((doc: any) => {
-      // Use transformDocument to ensure consistent format with All Files tab
-      return transformDocument(doc)
-    })
+    const transformedResults = nonDeleted.map((doc: any) => transformDocument(doc))
 
     smartSearchResults.value = transformedResults
 
@@ -5438,7 +5447,7 @@ const handleDocumentRequestAccess = async () => {
                       </div>
 
             <!-- Empty State (No Search Yet) -->
-            <div v-else-if="!smartSearchQuery.trim() && smartSearchResults.length === 0" class="flex flex-col items-center justify-center py-12">
+            <div v-else-if="!smartSearchQuery.trim() && visibleSearchResults.length === 0" class="flex flex-col items-center justify-center py-12">
               <div class="w-16 h-16 rounded-full bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center mb-4">
                 <Search class="w-8 h-8 text-blue-600 dark:text-blue-400" />
                       </div>
@@ -5449,7 +5458,7 @@ const handleDocumentRequestAccess = async () => {
                     </div>
 
             <!-- No Results -->
-            <div v-else-if="smartSearchResults.length === 0" class="flex flex-col items-center justify-center py-12">
+            <div v-else-if="visibleSearchResults.length === 0" class="flex flex-col items-center justify-center py-12">
               <div class="w-16 h-16 rounded-full bg-gray-100 dark:bg-neutral-800 flex items-center justify-center mb-4">
                 <FolderIcon class="w-8 h-8 text-gray-400 dark:text-neutral-500" />
                       </div>
@@ -5463,12 +5472,12 @@ const handleDocumentRequestAccess = async () => {
             <div v-else class="space-y-4">
               <div class="flex items-center justify-between">
                 <h3 class="text-sm font-semibold text-gray-900 dark:text-neutral-100">
-                  Found {{ smartSearchResults.length }} result{{ smartSearchResults.length > 1 ? 's' : '' }}
+                  Found {{ visibleSearchResults.length }} result{{ visibleSearchResults.length > 1 ? 's' : '' }}
                 </h3>
                 <Button
                   variant="ghost"
                   size="sm"
-                  @click="smartSearchQuery = ''; smartSearchResults = []"
+                  @click="smartSearchQuery = ''; smartSearchResults.value = []"
                   class="text-xs text-gray-600 dark:text-neutral-400"
                 >
                   Clear
@@ -5478,7 +5487,7 @@ const handleDocumentRequestAccess = async () => {
               <!-- Document Cards Grid -->
               <div class="grid gap-4 grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
                 <div
-                  v-for="result in smartSearchResults"
+                  v-for="result in visibleSearchResults"
                   :key="result.id"
                   @click="openFileViewer(result)"
                   class="relative bg-white border border-gray-200 rounded-lg p-4 hover:shadow-lg cursor-pointer transition-shadow dark:bg-neutral-800 dark:border-neutral-700 dark:hover:bg-neutral-750"

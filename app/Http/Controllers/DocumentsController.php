@@ -219,16 +219,13 @@ class DocumentsController extends Controller
         // Generate unique stored name
         $storedName = Str::random(40).'.'.$extension;
 
-        // Ensure documents directory exists
-        $documentsDir = 'private/documents';
+        // Store under 'documents' only (disk root is already storage/app/private)
+        // Full path = storage/app/private/documents/filename (no double/triple "private")
+        $documentsDir = 'documents';
         if (! Storage::disk('local')->exists($documentsDir)) {
             Storage::disk('local')->makeDirectory($documentsDir);
         }
 
-        // Store file
-        // storeAs returns path relative to disk root (storage/app/private)
-        // So 'private/documents' becomes 'private/documents' relative to disk root
-        // Which results in: storage/app/private/private/documents/filename
         $storedPath = $file->storeAs($documentsDir, $storedName, 'local');
 
         // Verify file was stored successfully
@@ -271,12 +268,13 @@ class DocumentsController extends Controller
             $reviewMessage = "File uploaded by {$employee->full_name} - Department Manager";
         }
 
-        // Create document
+        // Create document (store exact path from storeAs so queue worker finds the file)
         $document = Document::create([
             'user_id' => $user->id,
             'department_id' => $departmentId,
             'file_name' => $file->getClientOriginalName(),
             'stored_name' => $storedName,
+            'stored_path' => $storedPath,
             'mime_type' => $file->getMimeType(),
             'size' => $file->getSize(),
             'description' => $request->input('description'),
@@ -311,11 +309,7 @@ class DocumentsController extends Controller
         $isPdf = $document->mime_type === self::PDF_MIME_TYPE;
 
         if ($status === 'approved' && $isPdf) {
-            // Use the EXACT path that storeAs returned (reconstruct it the same way)
-            // storeAs('private/documents', filename, 'local') returns 'private/documents/filename'
-            // This is relative to disk root: storage/app/private
-            // So full path is: storage/app/private/private/documents/filename
-            $filePath = 'private/documents/'.$document->stored_name;
+            $filePath = $document->stored_path ?? 'documents/'.$document->stored_name;
 
             // Verify file exists before dispatching job
             if (! Storage::disk('local')->exists($filePath)) {
@@ -326,7 +320,7 @@ class DocumentsController extends Controller
                     'full_path' => Storage::disk('local')->path($filePath),
                     'disk_root' => Storage::disk('local')->path(''),
                     'stored_path_from_upload' => $storedPath, // What storeAs returned
-                    'all_files' => Storage::disk('local')->allFiles('private/documents'),
+                    'all_files' => Storage::disk('local')->allFiles('documents'),
                 ]);
 
                 return response()->json([
@@ -518,11 +512,13 @@ class DocumentsController extends Controller
         // For keyword search, use Meilisearch
         if ($mode === 'keywords') {
             // Search using Laravel Scout - only filter by approved status, limit to top 20 by relevance
-            // Frontend will handle permission checks and show "Request Access" if needed
+            // Scout get() uses the model's query (SoftDeletes scope excludes trashed); filter again to be safe
             $searchResults = Document::search($query)
                 ->where('status', 'approved')
                 ->take(20)
-                ->get();
+                ->get()
+                ->filter(fn (Document $doc) => $doc->deleted_at === null)
+                ->values();
 
             // Load relationships for results
             $searchResults->load([
@@ -532,9 +528,7 @@ class DocumentsController extends Controller
             ]);
 
             // Return documents in format that transformDocument expects
-            // Frontend will use transformDocument to format them consistently
             $results = $searchResults->map(function ($document) {
-                // Return the document as-is so transformDocument can process it
                 return $document;
             })->values();
 
@@ -1073,7 +1067,7 @@ class DocumentsController extends Controller
         // Delete the physical file from storage
         if ($trashedDocument->stored_name) {
             try {
-                $filePath = 'private/documents/'.$trashedDocument->stored_name;
+                $filePath = $trashedDocument->stored_path ?? 'documents/'.$trashedDocument->stored_name;
                 Storage::disk('local')->delete($filePath);
             } catch (\Exception $e) {
                 // Log error but continue with database deletion
@@ -1200,8 +1194,8 @@ class DocumentsController extends Controller
                 // Delete the physical file from storage
                 if ($document->stored_name) {
                     try {
-                        $filePath = 'private/documents/'.$document->stored_name;
-                        Storage::disk('local')->delete($filePath);
+$filePath = $document->stored_path ?? 'documents/'.$document->stored_name;
+                    Storage::disk('local')->delete($filePath);
                     } catch (\Exception $e) {
                         // Log error but continue with database deletion
                         Log::warning('Failed to delete file from storage: '.$e->getMessage());
@@ -1238,8 +1232,8 @@ class DocumentsController extends Controller
 
         // Admin can always preview
         if ($employee->role === 'admin') {
-            $filePath = 'private/documents/'.$document->stored_name;
-            if (! Storage::disk('local')->exists($filePath)) {
+            $filePath = $document->getStoragePath();
+            if (! $filePath || ! Storage::disk('local')->exists($filePath)) {
                 abort(404, 'File not found.');
             }
 
@@ -1289,8 +1283,8 @@ class DocumentsController extends Controller
             abort(403, 'You do not have permission to preview this document.');
         }
 
-        $filePath = 'private/documents/'.$document->stored_name;
-        if (! Storage::disk('local')->exists($filePath)) {
+        $filePath = $document->getStoragePath();
+        if (! $filePath || ! Storage::disk('local')->exists($filePath)) {
             abort(404, 'File not found.');
         }
 
@@ -1318,8 +1312,8 @@ class DocumentsController extends Controller
 
         // Admin can always download
         if ($employee->role === 'admin') {
-            $filePath = 'private/documents/'.$document->stored_name;
-            if (! Storage::disk('local')->exists($filePath)) {
+            $filePath = $document->getStoragePath();
+            if (! $filePath || ! Storage::disk('local')->exists($filePath)) {
                 abort(404, 'File not found.');
             }
 
@@ -1368,8 +1362,8 @@ class DocumentsController extends Controller
             abort(403, 'You do not have permission to download this document.');
         }
 
-        $filePath = 'private/documents/'.$document->stored_name;
-        if (! Storage::disk('local')->exists($filePath)) {
+        $filePath = $document->getStoragePath();
+        if (! $filePath || ! Storage::disk('local')->exists($filePath)) {
             abort(404, 'File not found.');
         }
 

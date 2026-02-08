@@ -8,6 +8,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Support\Facades\Storage;
 use Laravel\Scout\Searchable;
 
 class Document extends Model
@@ -28,6 +29,7 @@ class Document extends Model
         'department_id',
         'file_name',
         'stored_name',
+        'stored_path',
         'mime_type',
         'size',
         'description',
@@ -77,6 +79,31 @@ class Document extends Model
     public function reviewer(): BelongsTo
     {
         return $this->belongsTo(User::class, 'reviewed_by');
+    }
+
+    /**
+     * Get the storage-relative path that actually exists on disk.
+     * Tries multiple path formats so both old and new uploads work (preview, download, extraction).
+     */
+    public function getStoragePath(): ?string
+    {
+        if (! $this->stored_name) {
+            return null;
+        }
+        $disk = Storage::disk('local');
+        $candidates = [
+            'documents/'.$this->stored_name,
+            $this->stored_path,
+            $this->stored_name,
+            'private/documents/'.$this->stored_name,
+        ];
+        foreach ($candidates as $path) {
+            if ($path && $disk->exists($path)) {
+                return $path;
+            }
+        }
+
+        return $this->stored_path ?? 'documents/'.$this->stored_name;
     }
 
     protected function casts(): array

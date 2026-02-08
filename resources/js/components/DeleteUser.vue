@@ -49,9 +49,7 @@ const passwordInput = ref<InstanceType<typeof Input> | null>(null);
                         v-bind="ProfileController.destroy.form()"
                         reset-on-success
                         @error="() => passwordInput?.$el?.focus()"
-                        :options="{
-                            preserveScroll: true,
-                        }"
+                        :options="{}"
                         class="space-y-6"
                         v-slot="{ errors, processing, reset, clearErrors }"
                     >

@@ -37,9 +37,7 @@ const currentPasswordInput = ref<HTMLInputElement | null>(null);
 
                 <Form
                     v-bind="PasswordController.update.form()"
-                    :options="{
-                        preserveScroll: true,
-                    }"
+                    :options="{}"
                     reset-on-success
                     :reset-on-error="[
                         'password',
