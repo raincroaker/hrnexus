@@ -268,9 +268,17 @@ watch(requestDownloadConfirmOpen, (isOpen) => {
 })
 
 const openFileViewer = (file: any) => {
-  // Don't open deleted/non-existent docs (e.g. stale search results)
+  if (file?.id == null) return
+  // Trashed documents: allow opening (they're in trashedDocuments, not documents)
+  const isTrashed = !!(file.deletedAt || file.deletedBy) || (props.trashedDocuments || []).some((d: any) => d.id === file.id)
+  if (isTrashed) {
+    selectedDocumentForDetails.value = file
+    documentDetailsOpen.value = true
+    return
+  }
+  // Non-trashed: don't open if doc no longer exists (e.g. stale search results)
   const docIds = new Set((props.documents || []).map((d: any) => d.id))
-  if (file?.id != null && !docIds.has(file.id)) {
+  if (!docIds.has(file.id)) {
     smartSearchResults.value = smartSearchResults.value.filter((r: any) => r.id !== file.id)
     toast.error('This document no longer exists and was removed from search results.')
     return
@@ -569,6 +577,10 @@ watch(smartSearchDialogOpen, (isOpen) => {
   }
 })
 
+const clearSmartSearch = () => {
+  smartSearchQuery.value = ''
+  smartSearchResults.value = []
+}
 
 /**
  * Perform smart search
@@ -2832,11 +2844,14 @@ const confirmRestore = async () => {
     })
     
     toast.success(response.data?.message || 'File restored successfully')
-    
-    // Reload to get updated documents list from server
-    await router.reload({
-      only: ['documents', 'trashedDocuments', 'accessRequests'],
-    })
+    const restoredId = restoreTargetFile.value.id
+    restoreConfirmDialogOpen.value = false
+    restorePassword.value = ''
+    restoreCountdown.value = 2
+    restoreTargetFile.value = null
+    // Optimistic: remove from trash list immediately
+    trashFiles.value = trashFiles.value.filter(t => t.id !== restoredId)
+    await refetchDocuments()
   } catch (error: any) {
     console.error('Error restoring document:', error)
     if (error.response?.status === 403) {
@@ -2848,15 +2863,6 @@ const confirmRestore = async () => {
     }
     throw error
   }
-  
-  // Close dialog and reset
-  restoreConfirmDialogOpen.value = false
-  restorePassword.value = ''
-  restoreCountdown.value = 2
-  restoreTargetFile.value = null
-  await router.reload({
-    only: ['documents', 'trashedDocuments', 'accessRequests'],
-  })
 }
 
 /**
@@ -2909,17 +2915,14 @@ const confirmPermanentDelete = async () => {
     })
     
     toast.success('File permanently deleted')
-    
-    // Close dialog and reset
+    const deletedId = permanentDeleteTargetFile.value.id
     permanentDeleteConfirmDialogOpen.value = false
     permanentDeletePassword.value = ''
     permanentDeleteCountdown.value = 3
     permanentDeleteTargetFile.value = null
-    
-    // Reload to get updated documents list from server
-    await router.reload({
-      only: ['documents', 'trashedDocuments', 'accessRequests'],
-    })
+    // Optimistic: remove from trash list immediately
+    trashFiles.value = trashFiles.value.filter(t => t.id !== deletedId)
+    await refetchDocuments()
   } catch (error: any) {
     console.error('Error permanently deleting document:', error)
     if (error.response?.status === 403) {
@@ -2984,16 +2987,11 @@ const confirmRestoreAll = async () => {
     } else {
       toast.info('No files were restored.')
     }
-    
-    // Close dialog and reset
     restoreAllConfirmDialogOpen.value = false
     restoreAllPassword.value = ''
     restoreAllCountdown.value = 3
-    
-    // Reload to get updated documents list from server
-    await router.reload({
-      only: ['documents', 'trashedDocuments', 'accessRequests'],
-    })
+    trashFiles.value = []
+    await refetchDocuments()
   } catch (error: any) {
     console.error('Error restoring all documents:', error)
     if (error.response?.status === 403) {
@@ -3058,16 +3056,13 @@ const confirmDeleteAll = async () => {
     } else {
       toast.info('No files were deleted.')
     }
-    
     // Close dialog and reset
     deleteAllConfirmDialogOpen.value = false
     deleteAllPassword.value = ''
     deleteAllCountdown.value = 3
-    
-    // Reload to get updated documents list from server
-    await router.reload({
-      only: ['documents', 'trashedDocuments', 'accessRequests'],
-    })
+    // Optimistic: clear trash list immediately
+    trashFiles.value = []
+    await refetchDocuments()
   } catch (error: any) {
     console.error('Error permanently deleting all documents:', error)
     if (error.response?.status === 403) {
@@ -3140,6 +3135,16 @@ const openRemoveDialogForFile = (file: any) => {
       }
     }
   }, 1000)
+}
+
+const closeDeleteConfirm = () => {
+  deleteConfirmDialogOpen.value = false
+  deletePassword.value = ''
+  deleteCountdown.value = 2
+  if (deleteCountdownInterval.value) {
+    clearInterval(deleteCountdownInterval.value)
+    deleteCountdownInterval.value = null
+  }
 }
 
 // Cleanup countdown on dialog close
@@ -3224,17 +3229,16 @@ const confirmDelete = async () => {
     })
     
     toast.success('Document moved to trash')
-    
+    const deletedId = deleteTargetFile.value.id
     // Close dialog and reset
     deleteConfirmDialogOpen.value = false
     deletePassword.value = ''
     deleteCountdown.value = 2
     deleteTargetFile.value = null
-    
-    // Reload to get updated documents list from server
-    await router.reload({
-      only: ['documents', 'trashedDocuments', 'accessRequests'],
-    })
+    // Optimistic: remove from list immediately so UI doesn't show stale state
+    files.value = files.value.filter(f => f.id !== deletedId)
+    // Refetch documents + trash from API so lists stay in sync with server
+    await refetchDocuments()
     
   } catch (error: any) {
     console.error('Delete error:', error)
@@ -3509,7 +3513,7 @@ const handleDocumentRequestAccess = async () => {
                 <!-- Search Bar -->
                 <div class="relative w-full">
                   <Search class="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
-                  <Input v-model="search" placeholder="Search File Name or Uploader Name" class="pl-10 h-10" />
+                  <Input v-model="search" placeholder="Search File Name or Uploader Name" class="pl-10 h-10" autocomplete="off" name="documents-search" />
                 </div>
 
                 <!-- Filters Row -->
@@ -3707,7 +3711,7 @@ const handleDocumentRequestAccess = async () => {
                     <!-- Search Bar -->
                     <div class="relative w-full">
                       <Search class="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
-                      <Input v-model="search" placeholder="Search File Name or Uploader Name" class="pl-10 h-10" />
+                      <Input v-model="search" placeholder="Search File Name or Uploader Name" class="pl-10 h-10" autocomplete="off" name="documents-search" />
                     </div>
 
                     <!-- Filters Row -->
@@ -3905,7 +3909,7 @@ const handleDocumentRequestAccess = async () => {
                     <!-- Search Bar -->
                     <div class="relative w-full">
                       <Search class="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
-                      <Input v-model="search" placeholder="Search File Name or Uploader Name" class="pl-10 h-10" />
+                      <Input v-model="search" placeholder="Search File Name or Uploader Name" class="pl-10 h-10" autocomplete="off" name="documents-search" />
                     </div>
 
                     <!-- Filters Row -->
@@ -4149,7 +4153,7 @@ const handleDocumentRequestAccess = async () => {
               <div class="flex flex-col gap-3 mb-6">
                 <div class="relative w-full">
                   <Search class="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
-                  <Input v-model="search" placeholder="Search File Name or Uploader Name" class="pl-10 h-10" />
+                  <Input v-model="search" placeholder="Search File Name or Uploader Name" class="pl-10 h-10" autocomplete="off" name="documents-search" />
                 </div>
 
                 <div class="flex gap-2 flex-wrap">
@@ -4333,7 +4337,7 @@ const handleDocumentRequestAccess = async () => {
                   <div class="flex flex-col gap-3 mb-6">
                     <div class="relative w-full">
                       <Search class="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
-                      <Input v-model="search" placeholder="Search File Name or Uploader Name" class="pl-10 h-10" />
+                      <Input v-model="search" placeholder="Search File Name or Uploader Name" class="pl-10 h-10" autocomplete="off" name="documents-search" />
                     </div>
 
                     <div class="flex gap-2 flex-wrap">
@@ -4519,7 +4523,7 @@ const handleDocumentRequestAccess = async () => {
                   <div class="flex flex-col gap-3 mb-6">
                     <div class="relative w-full">
                       <Search class="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
-                      <Input v-model="search" placeholder="Search File Name or Uploader Name" class="pl-10 h-10" />
+                      <Input v-model="search" placeholder="Search File Name or Uploader Name" class="pl-10 h-10" autocomplete="off" name="documents-search" />
                     </div>
 
                     <div class="flex gap-2 flex-wrap">
@@ -4764,7 +4768,7 @@ const handleDocumentRequestAccess = async () => {
                     <div class="relative flex-1">
                      <Search class="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
                       <Input v-model="search" placeholder="Search File Name or User Name"
-                        class="pl-10 h-10" />
+                        class="pl-10 h-10" autocomplete="off" name="documents-search" />
                     </div>
                   </div>
 
@@ -5027,7 +5031,7 @@ const handleDocumentRequestAccess = async () => {
                   <div class="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 mb-6">
                     <div class="relative flex-1">
                       <Search class="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
-                      <Input v-model="search" placeholder="Search File Name or User Name" class="pl-10 h-10" />
+                      <Input v-model="search" placeholder="Search File Name or User Name" class="pl-10 h-10" autocomplete="off" name="documents-search" />
                     </div>
                   </div>
 
@@ -5412,6 +5416,8 @@ const handleDocumentRequestAccess = async () => {
               <Input
                 v-model="smartSearchQuery"
                 @keyup.enter="performSmartSearch"
+                autocomplete="off"
+                name="smart-search-query"
                 :placeholder="smartSearchMode === 'keywords'
                   ? 'Enter keywords to search (e.g., report, budget, Q4)...'
                   : 'Describe what you are looking for (e.g., policies about remote work)...'"
@@ -5477,7 +5483,7 @@ const handleDocumentRequestAccess = async () => {
                 <Button
                   variant="ghost"
                   size="sm"
-                  @click="smartSearchQuery = ''; smartSearchResults.value = []"
+                  @click="clearSmartSearch"
                   class="text-xs text-gray-600 dark:text-neutral-400"
                 >
                   Clear
@@ -6973,6 +6979,7 @@ PERMISSION DETAILS & ACTIVITY MODAL
               id="delete-password"
               v-model="deletePassword"
               type="password"
+              autocomplete="new-password"
               placeholder="Enter your password..."
               class="w-full text-xs sm:text-sm dark:bg-neutral-800 dark:border-neutral-700 dark:text-neutral-100"
               @keyup.enter="confirmDelete"
@@ -6982,7 +6989,7 @@ PERMISSION DETAILS & ACTIVITY MODAL
         <AlertDialogFooter class="gap-2 flex-col sm:flex-row">
           <AlertDialogCancel 
             class="w-full sm:w-auto"
-            @click="deleteConfirmDialogOpen = false; deletePassword = ''; deleteCountdown = 5">
+            @click="closeDeleteConfirm">
             Cancel
           </AlertDialogCancel>
           <AlertDialogAction
@@ -7029,6 +7036,7 @@ PERMISSION DETAILS & ACTIVITY MODAL
               id="restore-password"
               v-model="restorePassword"
               type="password"
+              autocomplete="new-password"
               placeholder="Enter your password..."
               class="w-full text-xs sm:text-sm dark:bg-neutral-800 dark:border-neutral-700 dark:text-neutral-100"
               @keyup.enter="confirmRestore"
@@ -7084,6 +7092,7 @@ PERMISSION DETAILS & ACTIVITY MODAL
               id="permanent-delete-password"
               v-model="permanentDeletePassword"
               type="password"
+              autocomplete="new-password"
               placeholder="Enter your password..."
               class="w-full text-xs sm:text-sm dark:bg-neutral-800 dark:border-neutral-700 dark:text-neutral-100"
               @keyup.enter="confirmPermanentDelete"
@@ -7137,6 +7146,7 @@ PERMISSION DETAILS & ACTIVITY MODAL
               id="restore-all-password"
               v-model="restoreAllPassword"
               type="password"
+              autocomplete="new-password"
               placeholder="Enter your password..."
               class="w-full text-xs sm:text-sm dark:bg-neutral-800 dark:border-neutral-700 dark:text-neutral-100"
               @keyup.enter="confirmRestoreAll"
@@ -7189,6 +7199,7 @@ PERMISSION DETAILS & ACTIVITY MODAL
               id="delete-all-password"
               v-model="deleteAllPassword"
               type="password"
+              autocomplete="new-password"
               placeholder="Enter your password..."
               class="w-full text-xs sm:text-sm dark:bg-neutral-800 dark:border-neutral-700 dark:text-neutral-100"
               @keyup.enter="confirmDeleteAll"
