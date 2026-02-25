@@ -41,6 +41,12 @@ interface Employee {
     email: string;
     contact_number: string | null;
     birth_date: string | null;
+    hire_date: string | null;
+    employment_status: 'active' | 'inactive';
+    inactive_reason: 'terminated' | 'resigned' | 'retired' | 'end_of_contract' | 'other' | null;
+    inactive_reason_notes: string | null;
+    inactive_date: string | null;
+    length_of_service: string;
     avatar: string | null;
 }
 
@@ -71,6 +77,12 @@ interface CurrentUser {
     email: string;
     contact_number: string | null;
     birth_date: string | null;
+    hire_date: string | null;
+    employment_status: 'active' | 'inactive';
+    inactive_reason: 'terminated' | 'resigned' | 'retired' | 'end_of_contract' | 'other' | null;
+    inactive_reason_notes: string | null;
+    inactive_date: string | null;
+    length_of_service: string;
     avatar: string | null;
 }
 
@@ -101,6 +113,12 @@ const currentUser = ref({
     email: props.currentUser.email,
     contactNum: props.currentUser.contact_number || '',
     birthday: props.currentUser.birth_date || '',
+    hireDate: props.currentUser.hire_date || '',
+    employmentStatus: props.currentUser.employment_status || 'active',
+    inactiveReason: props.currentUser.inactive_reason || '',
+    inactiveReasonNotes: props.currentUser.inactive_reason_notes || '',
+    inactiveDate: props.currentUser.inactive_date || '',
+    lengthOfService: props.currentUser.length_of_service || 'N/A',
     avatar: props.currentUser.avatar || ''
 });
 
@@ -273,6 +291,12 @@ const allEmployees = ref(props.employees.map(emp => ({
     email: emp.email,
     contactNum: emp.contact_number || '',
     birthday: emp.birth_date || '',
+    hireDate: emp.hire_date || '',
+    employmentStatus: emp.employment_status || 'active',
+    inactiveReason: emp.inactive_reason || '',
+    inactiveReasonNotes: emp.inactive_reason_notes || '',
+    inactiveDate: emp.inactive_date || '',
+    lengthOfService: emp.length_of_service || 'N/A',
     avatar: emp.avatar || ''
 })));
 
@@ -709,10 +733,15 @@ const newEmployee = ref({
     email: '',
     contact_number: '',
     birth_date: '',
+    hire_date: '',
     password: '',
     confirmPassword: '',
     avatar: '',
-    role: 'employee' as 'employee' | 'department_manager' | 'admin' // Default role
+    role: 'employee' as 'employee' | 'department_manager' | 'admin', // Default role
+    employment_status: 'active' as 'active' | 'inactive',
+    inactive_reason: '' as '' | 'terminated' | 'resigned' | 'retired' | 'end_of_contract' | 'other',
+    inactive_reason_notes: '',
+    inactive_date: '',
 });
 
 // Function to open add employee dialog
@@ -731,10 +760,15 @@ const openAddEmployeeDialog = (fromDepartmentsTab = false) => {
         email: '',
         contact_number: '',
         birth_date: '',
+        hire_date: '',
         password: '',
         confirmPassword: '',
         avatar: '',
-        role: 'employee'
+        role: 'employee',
+        employment_status: 'active',
+        inactive_reason: '',
+        inactive_reason_notes: '',
+        inactive_date: '',
     };
     addEmployeeStep.value = 1; // Reset to first step
     isAddEmployeeDialogOpen.value = true;
@@ -788,6 +822,17 @@ const addNewEmployee = async () => {
         toast.error('Employee code is required!');
         return;
     }
+
+    if (newEmployee.value.employment_status === 'inactive') {
+        if (!newEmployee.value.inactive_reason) {
+            toast.error('Inactive reason is required when employee is inactive.');
+            return;
+        }
+        if (!newEmployee.value.inactive_date) {
+            toast.error('Inactive date is required when employee is inactive.');
+            return;
+        }
+    }
     
     // Prepare data matching Employee model structure
     // Only send avatar if it's a Base64 string (new upload), otherwise send null
@@ -805,8 +850,13 @@ const addNewEmployee = async () => {
         email: newEmployee.value.email.trim(),
         contact_number: newEmployee.value.contact_number?.trim() || null,
         birth_date: newEmployee.value.birth_date || null,
+        hire_date: newEmployee.value.hire_date || null,
         avatar: avatarToSend,
         role: newEmployee.value.role,
+        employment_status: newEmployee.value.employment_status,
+        inactive_reason: newEmployee.value.employment_status === 'inactive' ? (newEmployee.value.inactive_reason || null) : null,
+        inactive_reason_notes: newEmployee.value.employment_status === 'inactive' ? (newEmployee.value.inactive_reason_notes?.trim() || null) : null,
+        inactive_date: newEmployee.value.employment_status === 'inactive' ? (newEmployee.value.inactive_date || null) : null,
         password: newEmployee.value.password
     };
     
@@ -829,6 +879,12 @@ const addNewEmployee = async () => {
             email: response.data.employee.email,
             contactNum: response.data.employee.contact_number || '',
             birthday: response.data.employee.birth_date || '',
+            hireDate: response.data.employee.hire_date || '',
+            employmentStatus: response.data.employee.employment_status || 'active',
+            inactiveReason: response.data.employee.inactive_reason || '',
+            inactiveReasonNotes: response.data.employee.inactive_reason_notes || '',
+            inactiveDate: response.data.employee.inactive_date || '',
+            lengthOfService: response.data.employee.length_of_service || 'N/A',
             avatar: response.data.employee.avatar || ''
         };
         
@@ -848,10 +904,15 @@ const addNewEmployee = async () => {
             email: '',
             contact_number: '',
             birth_date: '',
+            hire_date: '',
             password: '',
             confirmPassword: '',
             avatar: '',
-            role: 'employee'
+            role: 'employee',
+            employment_status: 'active',
+            inactive_reason: '',
+            inactive_reason_notes: '',
+            inactive_date: '',
         };
     } catch (error: any) {
         // Show specific error message
@@ -894,6 +955,12 @@ const viewEmployeeDetails = (employee: any, fromAllEmployees = false) => {
         employee_code: employee.employeeCode,
         contact_number: employee.contactNum,
         birth_date: employee.birthday,
+        hire_date: employee.hireDate,
+        employment_status: employee.employmentStatus || 'active',
+        inactive_reason: employee.inactiveReason || '',
+        inactive_reason_notes: employee.inactiveReasonNotes || '',
+        inactive_date: employee.inactiveDate || '',
+        length_of_service: employee.lengthOfService || 'N/A',
         role,
         newPassword: '',
         confirmPassword: ''
@@ -941,6 +1008,17 @@ const saveEmployeeDetails = async () => {
             return;
         }
     }
+
+    if (selectedEmployee.value.employment_status === 'inactive') {
+        if (!selectedEmployee.value.inactive_reason) {
+            toast.error('Inactive reason is required when employee is inactive.');
+            return;
+        }
+        if (!selectedEmployee.value.inactive_date) {
+            toast.error('Inactive date is required when employee is inactive.');
+            return;
+        }
+    }
     
     // Check if avatar is a new Base64 image or unchanged
     let avatarToSend: string | null = null;
@@ -971,8 +1049,13 @@ const saveEmployeeDetails = async () => {
         email: selectedEmployee.value.email.trim(),
         contact_number: selectedEmployee.value.contact_number?.trim() || null,
         birth_date: selectedEmployee.value.birth_date || null,
+        hire_date: selectedEmployee.value.hire_date || null,
         avatar: avatarToSend,
-        role: roleValue
+        role: roleValue,
+        employment_status: selectedEmployee.value.employment_status || 'active',
+        inactive_reason: selectedEmployee.value.employment_status === 'inactive' ? (selectedEmployee.value.inactive_reason || null) : null,
+        inactive_reason_notes: selectedEmployee.value.employment_status === 'inactive' ? (selectedEmployee.value.inactive_reason_notes?.trim() || null) : null,
+        inactive_date: selectedEmployee.value.employment_status === 'inactive' ? (selectedEmployee.value.inactive_date || null) : null,
     };
     
     // Add password only if provided
@@ -996,6 +1079,18 @@ const saveEmployeeDetails = async () => {
         selectedEmployee.value.employeeCode = updatedEmployee.employee_code;
         selectedEmployee.value.contactNum = updatedEmployee.contact_number || '';
         selectedEmployee.value.birthday = updatedEmployee.birth_date || '';
+        selectedEmployee.value.hireDate = updatedEmployee.hire_date || '';
+        selectedEmployee.value.hire_date = updatedEmployee.hire_date || '';
+        selectedEmployee.value.employmentStatus = updatedEmployee.employment_status || 'active';
+        selectedEmployee.value.employment_status = updatedEmployee.employment_status || 'active';
+        selectedEmployee.value.inactiveReason = updatedEmployee.inactive_reason || '';
+        selectedEmployee.value.inactive_reason = updatedEmployee.inactive_reason || '';
+        selectedEmployee.value.inactiveReasonNotes = updatedEmployee.inactive_reason_notes || '';
+        selectedEmployee.value.inactive_reason_notes = updatedEmployee.inactive_reason_notes || '';
+        selectedEmployee.value.inactiveDate = updatedEmployee.inactive_date || '';
+        selectedEmployee.value.inactive_date = updatedEmployee.inactive_date || '';
+        selectedEmployee.value.lengthOfService = updatedEmployee.length_of_service || 'N/A';
+        selectedEmployee.value.length_of_service = updatedEmployee.length_of_service || 'N/A';
         selectedEmployee.value.avatar = updatedEmployee.avatar || '';
         selectedEmployee.value.role = formatRole(updatedEmployee.role);
         
@@ -1225,6 +1320,28 @@ const roleBadgeClasses: Record<string, string> = {
 const getRoleBadgeClass = (role: string): string => {
     const normalized = role.toLowerCase();
     return roleBadgeClasses[normalized] ?? 'bg-slate-500/15 text-slate-300 border-slate-500/40';
+};
+
+const formatInactiveReason = (reason: string): string => {
+    if (!reason) return 'N/A';
+    if (reason === 'end_of_contract') return 'End of Contract';
+    return reason
+        .split('_')
+        .map((p) => p.charAt(0).toUpperCase() + p.slice(1))
+        .join(' ');
+};
+
+const getEmploymentStatusLabel = (status: string, reason?: string): string => {
+    if ((status || '').toLowerCase() === 'inactive') {
+        return reason ? `Inactive - ${formatInactiveReason(reason)}` : 'Inactive';
+    }
+    return 'Active';
+};
+
+const getEmploymentStatusBadgeClass = (status: string): string => {
+    return (status || '').toLowerCase() === 'inactive'
+        ? 'bg-rose-500/15 text-rose-300 border-rose-500/40'
+        : 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40';
 };
 
 // Computed property for current user's formatted role
@@ -1620,6 +1737,8 @@ const filteredPositionsByDepartment = computed(() => {
                                             <th class="h-12 px-4 text-left align-middle font-medium text-muted-foreground">Department</th>
                                             <th class="h-12 px-4 text-left align-middle font-medium text-muted-foreground">Position</th>
                                             <th class="h-12 px-4 text-left align-middle font-medium text-muted-foreground">Role</th>
+                                            <th class="h-12 px-4 text-left align-middle font-medium text-muted-foreground">Status</th>
+                                            <th class="h-12 px-4 text-left align-middle font-medium text-muted-foreground">Length of Service</th>
                                             <th class="h-12 px-4 text-left align-middle font-medium text-muted-foreground">Employee Code</th>
                                             <th class="h-12 px-4 text-left align-middle font-medium text-muted-foreground">Email</th>
                                         </tr>
@@ -1639,6 +1758,15 @@ const filteredPositionsByDepartment = computed(() => {
                                                     {{ employee.role }}
                                                 </Badge>
                                             </td>
+                                            <td class="p-4 align-middle">
+                                                <Badge
+                                                    variant="outline"
+                                                    :class="getEmploymentStatusBadgeClass(employee.employmentStatus)"
+                                                >
+                                                    {{ getEmploymentStatusLabel(employee.employmentStatus, employee.inactiveReason) }}
+                                                </Badge>
+                                            </td>
+                                            <td class="p-4 align-middle text-sm">{{ employee.lengthOfService || 'N/A' }}</td>
                                             <td class="p-4 align-middle font-mono text-xs">{{ employee.employeeCode }}</td>
                                             <td class="p-4 align-middle text-sm text-muted-foreground">{{ employee.email }}</td>
                                             <td class="p-4 align-middle text-right">
@@ -1712,6 +1840,20 @@ const filteredPositionsByDepartment = computed(() => {
                                             >
                                                 {{ employee.role }}
                                             </Badge>
+                                        </div>
+                                        <div class="flex gap-2">
+                                            <span class="text-muted-foreground w-24">Status:</span>
+                                            <Badge
+                                                variant="outline"
+                                                class="text-xs"
+                                                :class="getEmploymentStatusBadgeClass(employee.employmentStatus)"
+                                            >
+                                                {{ getEmploymentStatusLabel(employee.employmentStatus, employee.inactiveReason) }}
+                                            </Badge>
+                                        </div>
+                                        <div class="flex gap-2">
+                                            <span class="text-muted-foreground w-24">Service:</span>
+                                            <span>{{ employee.lengthOfService || 'N/A' }}</span>
                                         </div>
                                         <div class="flex gap-2">
                                             <span class="text-muted-foreground w-24">Email:</span>
@@ -2045,6 +2187,8 @@ const filteredPositionsByDepartment = computed(() => {
                                             <th class="h-12 px-4 text-left align-middle font-medium text-muted-foreground">Department</th>
                                             <th class="h-12 px-4 text-left align-middle font-medium text-muted-foreground">Position</th>
                                             <th class="h-12 px-4 text-left align-middle font-medium text-muted-foreground">Role</th>
+                                            <th class="h-12 px-4 text-left align-middle font-medium text-muted-foreground">Status</th>
+                                            <th class="h-12 px-4 text-left align-middle font-medium text-muted-foreground">Length of Service</th>
                                             <th class="h-12 px-4 text-left align-middle font-medium text-muted-foreground">Employee Code</th>
                                             <th class="h-12 px-4 text-left align-middle font-medium text-muted-foreground">Email</th>
                                         </tr>
@@ -2064,6 +2208,15 @@ const filteredPositionsByDepartment = computed(() => {
                                                     {{ employee.role }}
                                                 </Badge>
                                             </td>
+                                            <td class="p-4 align-middle">
+                                                <Badge
+                                                    variant="outline"
+                                                    :class="getEmploymentStatusBadgeClass(employee.employmentStatus)"
+                                                >
+                                                    {{ getEmploymentStatusLabel(employee.employmentStatus, employee.inactiveReason) }}
+                                                </Badge>
+                                            </td>
+                                            <td class="p-4 align-middle text-sm">{{ employee.lengthOfService || 'N/A' }}</td>
                                             <td class="p-4 align-middle font-mono text-xs">{{ employee.employeeCode }}</td>
                                             <td class="p-4 align-middle text-sm text-muted-foreground">{{ employee.email }}</td>
                                             <td class="p-4 align-middle text-right">
@@ -2137,6 +2290,20 @@ const filteredPositionsByDepartment = computed(() => {
                                             >
                                                 {{ employee.role }}
                                             </Badge>
+                                        </div>
+                                        <div class="flex gap-2">
+                                            <span class="text-muted-foreground w-24">Status:</span>
+                                            <Badge
+                                                variant="outline"
+                                                class="text-xs"
+                                                :class="getEmploymentStatusBadgeClass(employee.employmentStatus)"
+                                            >
+                                                {{ getEmploymentStatusLabel(employee.employmentStatus, employee.inactiveReason) }}
+                                            </Badge>
+                                        </div>
+                                        <div class="flex gap-2">
+                                            <span class="text-muted-foreground w-24">Service:</span>
+                                            <span>{{ employee.lengthOfService || 'N/A' }}</span>
                                         </div>
                                         <div class="flex gap-2">
                                             <span class="text-muted-foreground w-24">Email:</span>
@@ -2251,6 +2418,50 @@ const filteredPositionsByDepartment = computed(() => {
                                 <div class="space-y-2">
                                     <Label class="text-sm font-medium">Birthday</Label>
                                     <Input v-model="newEmployee.birth_date" type="date" />
+                                </div>
+
+                                <div class="space-y-2">
+                                    <Label class="text-sm font-medium">Hire Date</Label>
+                                    <Input v-model="newEmployee.hire_date" type="date" />
+                                </div>
+
+                                <div class="space-y-2">
+                                    <Label class="text-sm font-medium">Employment Status</Label>
+                                    <Select v-model="newEmployee.employment_status">
+                                        <SelectTrigger>
+                                            <SelectValue placeholder="Select status" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            <SelectItem value="active">Active</SelectItem>
+                                            <SelectItem value="inactive">Inactive</SelectItem>
+                                        </SelectContent>
+                                    </Select>
+                                </div>
+
+                                <div v-if="newEmployee.employment_status === 'inactive'" class="space-y-2">
+                                    <Label class="text-sm font-medium">Inactive Reason</Label>
+                                    <Select v-model="newEmployee.inactive_reason">
+                                        <SelectTrigger>
+                                            <SelectValue placeholder="Select reason" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            <SelectItem value="terminated">Terminated</SelectItem>
+                                            <SelectItem value="resigned">Resigned</SelectItem>
+                                            <SelectItem value="retired">Retired</SelectItem>
+                                            <SelectItem value="end_of_contract">End of Contract</SelectItem>
+                                            <SelectItem value="other">Other</SelectItem>
+                                        </SelectContent>
+                                    </Select>
+                                </div>
+
+                                <div v-if="newEmployee.employment_status === 'inactive'" class="space-y-2">
+                                    <Label class="text-sm font-medium">Inactive Date</Label>
+                                    <Input v-model="newEmployee.inactive_date" type="date" />
+                                </div>
+
+                                <div v-if="newEmployee.employment_status === 'inactive'" class="space-y-2">
+                                    <Label class="text-sm font-medium">Reason Notes</Label>
+                                    <Input v-model="newEmployee.inactive_reason_notes" placeholder="Optional notes" />
                                 </div>
 
                                 <div class="flex justify-end gap-2 pt-4 border-t">
@@ -2416,6 +2627,50 @@ const filteredPositionsByDepartment = computed(() => {
                                 <Label class="text-xs font-medium">Birthday</Label>
                                 <Input v-model="selectedEmployee.birth_date" type="date" class="h-9 text-sm" />
                             </div>
+
+                            <div class="space-y-1.5">
+                                <Label class="text-xs font-medium">Hire Date</Label>
+                                <Input v-model="selectedEmployee.hire_date" type="date" class="h-9 text-sm" />
+                            </div>
+
+                            <div class="space-y-1.5">
+                                <Label class="text-xs font-medium">Employment Status</Label>
+                                <Select v-model="selectedEmployee.employment_status">
+                                    <SelectTrigger class="h-9 text-sm">
+                                        <SelectValue placeholder="Select status" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="active">Active</SelectItem>
+                                        <SelectItem value="inactive">Inactive</SelectItem>
+                                    </SelectContent>
+                                </Select>
+                            </div>
+
+                            <div v-if="selectedEmployee.employment_status === 'inactive'" class="space-y-1.5">
+                                <Label class="text-xs font-medium">Inactive Reason</Label>
+                                <Select v-model="selectedEmployee.inactive_reason">
+                                    <SelectTrigger class="h-9 text-sm">
+                                        <SelectValue placeholder="Select reason" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="terminated">Terminated</SelectItem>
+                                        <SelectItem value="resigned">Resigned</SelectItem>
+                                        <SelectItem value="retired">Retired</SelectItem>
+                                        <SelectItem value="end_of_contract">End of Contract</SelectItem>
+                                        <SelectItem value="other">Other</SelectItem>
+                                    </SelectContent>
+                                </Select>
+                            </div>
+
+                            <div v-if="selectedEmployee.employment_status === 'inactive'" class="space-y-1.5">
+                                <Label class="text-xs font-medium">Inactive Date</Label>
+                                <Input v-model="selectedEmployee.inactive_date" type="date" class="h-9 text-sm" />
+                            </div>
+
+                            <div v-if="selectedEmployee.employment_status === 'inactive'" class="space-y-1.5">
+                                <Label class="text-xs font-medium">Reason Notes</Label>
+                                <Input v-model="selectedEmployee.inactive_reason_notes" class="h-9 text-sm" placeholder="Optional notes" />
+                            </div>
                         </div>
 
                         <!-- View Mode -->
@@ -2478,6 +2733,23 @@ const filteredPositionsByDepartment = computed(() => {
                                     </div>
                                 </div>
 
+                                <!-- Employment Status -->
+                                <div class="flex items-center gap-3">
+                                    <div class="w-10 h-10 rounded-lg bg-muted flex items-center justify-center shrink-0">
+                                        <UserCircle :size="18" class="text-muted-foreground" />
+                                    </div>
+                                    <div class="flex-1 min-w-0">
+                                        <p class="text-xs text-muted-foreground mb-0.5">Employment Status</p>
+                                        <Badge
+                                            variant="outline"
+                                            class="gap-1.5 text-xs"
+                                            :class="getEmploymentStatusBadgeClass(selectedEmployee.employmentStatus)"
+                                        >
+                                            {{ getEmploymentStatusLabel(selectedEmployee.employmentStatus, selectedEmployee.inactiveReason) }}
+                                        </Badge>
+                                    </div>
+                                </div>
+
                                 <!-- Contact Number -->
                                 <div class="flex items-center gap-3">
                                     <div class="w-10 h-10 rounded-lg bg-muted flex items-center justify-center shrink-0">
@@ -2500,6 +2772,17 @@ const filteredPositionsByDepartment = computed(() => {
                                     </div>
                                 </div>
 
+                                <!-- Length of Service -->
+                                <div class="flex items-center gap-3">
+                                    <div class="w-10 h-10 rounded-lg bg-muted flex items-center justify-center shrink-0">
+                                        <Calendar :size="18" class="text-muted-foreground" />
+                                    </div>
+                                    <div class="flex-1 min-w-0">
+                                        <p class="text-xs text-muted-foreground mb-0.5">Length of Service</p>
+                                        <p class="text-sm font-medium">{{ selectedEmployee.lengthOfService || 'N/A' }}</p>
+                                    </div>
+                                </div>
+
                                 <!-- Email - Full Width -->
                                 <div class="flex items-start gap-3 md:col-span-2">
                                     <div class="w-10 h-10 rounded-lg bg-muted flex items-center justify-center shrink-0">
@@ -2508,6 +2791,27 @@ const filteredPositionsByDepartment = computed(() => {
                                     <div class="flex-1 min-w-0">
                                         <p class="text-xs text-muted-foreground mb-0.5">Email</p>
                                         <p class="text-sm font-medium break-words">{{ selectedEmployee.email }}</p>
+                                    </div>
+                                </div>
+
+                                <div
+                                    v-if="selectedEmployee.employmentStatus === 'inactive'"
+                                    class="flex items-start gap-3 md:col-span-2"
+                                >
+                                    <div class="w-10 h-10 rounded-lg bg-muted flex items-center justify-center shrink-0">
+                                        <Shield :size="18" class="text-muted-foreground" />
+                                    </div>
+                                    <div class="flex-1 min-w-0">
+                                        <p class="text-xs text-muted-foreground mb-0.5">Inactive Details</p>
+                                        <p class="text-sm font-medium">
+                                            {{ formatInactiveReason(selectedEmployee.inactiveReason || '') }}
+                                            <span v-if="selectedEmployee.inactiveDate">
+                                                - {{ new Date(selectedEmployee.inactiveDate).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }) }}
+                                            </span>
+                                        </p>
+                                        <p v-if="selectedEmployee.inactiveReasonNotes" class="text-xs text-muted-foreground mt-1">
+                                            {{ selectedEmployee.inactiveReasonNotes }}
+                                        </p>
                                     </div>
                                 </div>
                             </div>

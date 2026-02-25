@@ -47,11 +47,9 @@ class EmployeesController extends Controller
 
         // Format employees for frontend (include display fields)
         $formattedEmployees = $employees->map(function ($employee) {
-            // Handle birth_date - could be string or Carbon instance
-            $birthDate = $employee->birth_date;
-            if ($birthDate && ! is_string($birthDate)) {
-                $birthDate = $birthDate->format('Y-m-d');
-            }
+            $birthDate = $this->formatDateForResponse($employee->birth_date);
+            $hireDate = $this->formatDateForResponse($employee->hire_date);
+            $inactiveDate = $this->formatDateForResponse($employee->inactive_date);
 
             // Format avatar URL
             $avatarUrl = null;
@@ -73,6 +71,12 @@ class EmployeesController extends Controller
                 'email' => $employee->email,
                 'contact_number' => $employee->contact_number,
                 'birth_date' => $birthDate,
+                'hire_date' => $hireDate,
+                'employment_status' => $employee->employment_status ?? 'active',
+                'inactive_reason' => $employee->inactive_reason,
+                'inactive_reason_notes' => $employee->inactive_reason_notes,
+                'inactive_date' => $inactiveDate,
+                'length_of_service' => $employee->length_of_service,
                 'avatar' => $avatarUrl,
             ];
         });
@@ -117,11 +121,9 @@ class EmployeesController extends Controller
         });
 
         // Format current user for frontend
-        // Handle birth_date - could be string or Carbon instance
-        $currentUserBirthDate = $currentEmployee->birth_date;
-        if ($currentUserBirthDate && ! is_string($currentUserBirthDate)) {
-            $currentUserBirthDate = $currentUserBirthDate->format('Y-m-d');
-        }
+        $currentUserBirthDate = $this->formatDateForResponse($currentEmployee->birth_date);
+        $currentUserHireDate = $this->formatDateForResponse($currentEmployee->hire_date);
+        $currentUserInactiveDate = $this->formatDateForResponse($currentEmployee->inactive_date);
 
         // Format avatar URL for current user
         $currentUserAvatarUrl = null;
@@ -143,6 +145,12 @@ class EmployeesController extends Controller
             'email' => $currentEmployee->email,
             'contact_number' => $currentEmployee->contact_number,
             'birth_date' => $currentUserBirthDate,
+            'hire_date' => $currentUserHireDate,
+            'employment_status' => $currentEmployee->employment_status ?? 'active',
+            'inactive_reason' => $currentEmployee->inactive_reason,
+            'inactive_reason_notes' => $currentEmployee->inactive_reason_notes,
+            'inactive_date' => $currentUserInactiveDate,
+            'length_of_service' => $currentEmployee->length_of_service,
             'avatar' => $currentUserAvatarUrl,
         ];
 
@@ -160,6 +168,8 @@ class EmployeesController extends Controller
     public function store(StoreEmployeeRequest $request): JsonResponse
     {
         $validated = $request->validated();
+        $employmentStatus = $validated['employment_status'] ?? 'active';
+        $isInactive = $employmentStatus === 'inactive';
 
         // Handle avatar upload if provided
         $avatarPath = null;
@@ -184,18 +194,22 @@ class EmployeesController extends Controller
             'email' => $validated['email'],
             'contact_number' => $validated['contact_number'] ?? null,
             'birth_date' => $validated['birth_date'] ?? null,
+            'hire_date' => $validated['hire_date'] ?? null,
             'avatar' => $avatarPath,
             'role' => $validated['role'],
+            'employment_status' => $employmentStatus,
+            'inactive_reason' => $isInactive ? ($validated['inactive_reason'] ?? null) : null,
+            'inactive_reason_notes' => $isInactive ? ($validated['inactive_reason_notes'] ?? null) : null,
+            'inactive_date' => $isInactive ? ($validated['inactive_date'] ?? null) : null,
         ]);
 
         // Load relationships for response
         $employee->load(['department', 'position']);
 
         // Format for frontend
-        $birthDate = $employee->birth_date;
-        if ($birthDate && ! is_string($birthDate)) {
-            $birthDate = $birthDate->format('Y-m-d');
-        }
+        $birthDate = $this->formatDateForResponse($employee->birth_date);
+        $hireDate = $this->formatDateForResponse($employee->hire_date);
+        $inactiveDate = $this->formatDateForResponse($employee->inactive_date);
 
         // Format avatar URL
         $avatarUrl = null;
@@ -220,6 +234,12 @@ class EmployeesController extends Controller
                 'email' => $employee->email,
                 'contact_number' => $employee->contact_number,
                 'birth_date' => $birthDate,
+                'hire_date' => $hireDate,
+                'employment_status' => $employee->employment_status ?? 'active',
+                'inactive_reason' => $employee->inactive_reason,
+                'inactive_reason_notes' => $employee->inactive_reason_notes,
+                'inactive_date' => $inactiveDate,
+                'length_of_service' => $employee->length_of_service,
                 'avatar' => $avatarUrl,
             ],
         ], 201);
@@ -231,6 +251,8 @@ class EmployeesController extends Controller
     public function update(UpdateEmployeeRequest $request, Employee $employee): JsonResponse
     {
         $validated = $request->validated();
+        $employmentStatus = $validated['employment_status'] ?? $employee->employment_status ?? 'active';
+        $isInactive = $employmentStatus === 'inactive';
 
         // Get associated user
         $user = User::where('email', $employee->email)->first();
@@ -271,6 +293,12 @@ class EmployeesController extends Controller
 
         // Remove password from validated data before updating employee
         unset($validated['password']);
+        $validated['employment_status'] = $employmentStatus;
+        if (! $isInactive) {
+            $validated['inactive_reason'] = null;
+            $validated['inactive_reason_notes'] = null;
+            $validated['inactive_date'] = null;
+        }
 
         // Update Employee record
         $employee->update($validated);
@@ -279,10 +307,9 @@ class EmployeesController extends Controller
         $employee->load(['department', 'position']);
 
         // Format for frontend
-        $birthDate = $employee->birth_date;
-        if ($birthDate && ! is_string($birthDate)) {
-            $birthDate = $birthDate->format('Y-m-d');
-        }
+        $birthDate = $this->formatDateForResponse($employee->birth_date);
+        $hireDate = $this->formatDateForResponse($employee->hire_date);
+        $inactiveDate = $this->formatDateForResponse($employee->inactive_date);
 
         // Format avatar URL
         $avatarUrl = null;
@@ -307,6 +334,12 @@ class EmployeesController extends Controller
                 'email' => $employee->email,
                 'contact_number' => $employee->contact_number,
                 'birth_date' => $birthDate,
+                'hire_date' => $hireDate,
+                'employment_status' => $employee->employment_status ?? 'active',
+                'inactive_reason' => $employee->inactive_reason,
+                'inactive_reason_notes' => $employee->inactive_reason_notes,
+                'inactive_date' => $inactiveDate,
+                'length_of_service' => $employee->length_of_service,
                 'avatar' => $avatarUrl,
             ],
         ]);
@@ -398,5 +431,22 @@ class EmployeesController extends Controller
         Storage::disk('public')->put($path, $decodedImage);
 
         return $path;
+    }
+
+    private function formatDateForResponse($value): ?string
+    {
+        if ($value === null || $value === '') {
+            return null;
+        }
+
+        if (is_string($value)) {
+            return $value;
+        }
+
+        if ($value instanceof \DateTimeInterface) {
+            return $value->format('Y-m-d');
+        }
+
+        return null;
     }
 }

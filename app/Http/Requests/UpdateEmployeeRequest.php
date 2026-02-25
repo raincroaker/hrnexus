@@ -72,8 +72,18 @@ class UpdateEmployeeRequest extends FormRequest
             'position_id' => ['nullable', 'integer', 'exists:positions,id'],
             'contact_number' => ['nullable', 'string', 'max:255'],
             'birth_date' => ['nullable', 'date'],
+            'hire_date' => ['nullable', 'date'],
             'avatar' => ['nullable', 'string'], // Base64 image string
             'role' => ['required', 'string', Rule::in(['employee', 'department_manager', 'admin'])],
+            'employment_status' => ['nullable', 'string', Rule::in(['active', 'inactive'])],
+            'inactive_reason' => [
+                'nullable',
+                'string',
+                Rule::in(['terminated', 'resigned', 'retired', 'end_of_contract', 'other']),
+                'required_if:employment_status,inactive',
+            ],
+            'inactive_reason_notes' => ['nullable', 'string', 'max:1000'],
+            'inactive_date' => ['nullable', 'date', 'required_if:employment_status,inactive'],
         ];
     }
 }
