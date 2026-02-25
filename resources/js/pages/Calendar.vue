@@ -1133,6 +1133,45 @@ const formatEventDetailsTime = (time: string): string => {
     return `${displayHour}:${minutes} ${ampm}`
 }
 
+const formatEventDateLong = (date?: Date): string => {
+    if (!date) return 'Not specified'
+    return date.toLocaleDateString('en-US', {
+        weekday: 'long',
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric',
+    })
+}
+
+const formatEventScheduleText = (event?: Event | null): string => {
+    if (!event) return 'Not specified'
+
+    if (event.allDay && event.startDate && event.endDate) {
+        return `All Day: ${event.startDate.toLocaleDateString()} - ${event.endDate.toLocaleDateString()}`
+    }
+
+    if (event.allDay) {
+        return 'All Day Event'
+    }
+
+    if (event.startTime && event.endTime) {
+        return `${formatEventDetailsTime(event.startTime)} - ${formatEventDetailsTime(event.endTime)}`
+    }
+
+    if (event.time) {
+        return event.time
+    }
+
+    return 'Not specified'
+}
+
+const formatEventVisibility = (event?: Event | null): string => {
+    if (!event?.visibility) return 'Not specified'
+    if (event.visibility === 'everyone') return 'For Everyone'
+    if (event.visibility === 'department' && event.department?.name) return event.department.name
+    return 'Department Event'
+}
+
 // Category management state
 const showCategoryDropdown = ref(false)
 const showAddCategoryModal = ref(false)
@@ -2390,10 +2429,10 @@ const handleEditColorInput = (e: globalThis.Event) => {
                     
                     <!-- Event Details Modal -->
                     <Dialog :open="showEventDetails && !!selectedEvent" @update:open="(open) => { if (!open) closeEventDetails() }">
-                        <DialogContent class="sm:max-w-4xl bg-card text-foreground border-border max-h-[95vh]">
+                        <DialogContent class="sm:max-w-5xl bg-card text-foreground border-border max-h-[95vh] p-0 overflow-hidden">
                             <ScrollArea class="max-h-[90vh] pr-2">
                                 <DialogHeader>
-                                    <DialogTitle class="flex items-center gap-2.5 text-lg sm:text-xl transition-all duration-200">
+                                    <DialogTitle class="flex items-center gap-2.5 text-lg sm:text-xl transition-all duration-200 px-4 pt-5 sm:px-6 sm:pt-6">
                                         <div
                                             class="w-4 h-4 sm:w-5 sm:h-5 rounded-full flex-shrink-0 transition-all duration-200"
                                             :class="selectedEvent?.color ?? undefined"
@@ -2402,6 +2441,26 @@ const handleEditColorInput = (e: globalThis.Event) => {
                                         <span class="truncate font-semibold">{{ isEditing ? 'Edit Event' : selectedEvent?.title }}</span>
                                     </DialogTitle>
                                 </DialogHeader>
+
+                                <div v-if="!isEditing" class="px-4 pb-1 sm:px-6">
+                                    <div class="flex flex-wrap items-center gap-2 text-xs">
+                                        <Badge variant="secondary" class="bg-muted text-foreground border-border">
+                                            {{ formatCategoryName(selectedEvent?.category) }}
+                                        </Badge>
+                                        <Badge variant="secondary" class="bg-muted text-foreground border-border">
+                                            {{ formatEventVisibility(selectedEvent) }}
+                                        </Badge>
+                                        <Badge variant="secondary" class="bg-muted text-foreground border-border">
+                                            {{ attendees.length }} attendee{{ attendees.length === 1 ? '' : 's' }}
+                                        </Badge>
+                                        <Badge
+                                            variant="secondary"
+                                            :class="isAttending ? 'bg-green-500/20 text-green-300 border-green-500/40' : 'bg-muted text-muted-foreground border-border'"
+                                        >
+                                            {{ isAttending ? 'You are going' : 'Not attending yet' }}
+                                        </Badge>
+                                    </div>
+                                </div>
 
                                 <!-- Edit Form -->
                                 <form v-if="isEditing" @submit.prevent="handleEditSubmit" class="space-y-4 p-3 sm:p-4">
@@ -2672,111 +2731,73 @@ const handleEditColorInput = (e: globalThis.Event) => {
                                 </form>
 
                                 <!-- Event Details View -->
-                                <div v-else class="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6 p-4 sm:p-6 h-full">
-                                    <!-- Left Column - Event Details -->
-                                    <div class="lg:col-span-2 flex flex-col space-y-4 min-h-0">
-                                        <!-- Basic Information -->
-                                        <div class="bg-muted p-5 sm:p-6 rounded-lg border border-border/50">
-                                            <h3 class="text-sm font-semibold text-foreground uppercase tracking-wide mb-5">
-                                                Event Information
-                                            </h3>
-                                            <div class="space-y-4">
-                                                <!-- Date & Time -->
-                                                <div class="pb-4 border-b border-border/50">
-                                                    <Label class="text-xs text-muted-foreground font-medium mb-2 block">Date & Time</Label>
-                                                    <p class="text-base text-foreground font-semibold mb-1">{{ selectedEvent?.date?.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }) }}</p>
-                                                    <p class="text-sm text-foreground">
-                                                        <template v-if="selectedEvent?.allDay && selectedEvent?.startDate && selectedEvent?.endDate">
-                                                            All Day: {{ selectedEvent.startDate.toLocaleDateString() }} - {{ selectedEvent.endDate.toLocaleDateString() }}
-                                                        </template>
-                                                        <template v-else-if="selectedEvent?.allDay">
-                                                            All Day Event
-                                                        </template>
-                                                        <template v-else-if="selectedEvent?.startTime && selectedEvent?.endTime">
-                                                            {{ formatEventDetailsTime(selectedEvent.startTime) }} - {{ formatEventDetailsTime(selectedEvent.endTime) }}
-                                                        </template>
-                                                        <template v-else-if="selectedEvent?.time">
-                                                            {{ selectedEvent.time }}
-                                                        </template>
-                                                    </p>
-                                                </div>
-                                                
-                                                <!-- Category & Visibility Row -->
-                                                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 pb-4 border-b border-border/50">
-                                                    <div>
-                                                        <Label class="text-xs text-muted-foreground font-medium mb-2 block">Category</Label>
-                                                        <Badge
-                                                            variant="secondary"
-                                                            class="text-sm border-0 px-3 py-1.5"
-                                                            :class="selectedEvent?.color ?? undefined"
-                                                            :style="(!selectedEvent?.color && selectedEvent?.colorHex) ? { backgroundColor: selectedEvent?.colorHex } : undefined"
-                                                        >
-                                                            {{ formatCategoryName(selectedEvent?.category) }}
-                                                        </Badge>
-                                                    </div>
-                                                    <div>
-                                                        <Label class="text-xs text-muted-foreground font-medium mb-2 block">Visibility</Label>
-                                                        <Badge
-                                                            v-if="selectedEvent?.visibility === 'everyone'"
-                                                            variant="secondary"
-                                                            class="text-sm border-0 px-3 py-1.5 bg-blue-500/20 text-blue-300"
-                                                        >
-                                                            For Everyone
-                                                        </Badge>
-                                                        <Badge
-                                                            v-else-if="selectedEvent?.visibility === 'department' && selectedEvent?.department"
-                                                            variant="secondary"
-                                                            class="text-sm border-0 px-3 py-1.5 bg-purple-500/20 text-purple-300"
-                                                        >
-                                                            {{ selectedEvent.department.name }}
-                                                        </Badge>
-                                                        <Badge
-                                                            v-else-if="selectedEvent?.visibility === 'department'"
-                                                            variant="secondary"
-                                                            class="text-sm border-0 px-3 py-1.5 bg-purple-500/20 text-purple-300"
-                                                        >
-                                                            Department Event
-                                                        </Badge>
-                                                    </div>
-                                                </div>
-                                                
-                                                <!-- Location & Organizer Row -->
-                                                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                                                    <div>
-                                                        <Label class="text-xs text-muted-foreground font-medium mb-2 block">Location</Label>
+                                <div v-else class="space-y-4 p-4 sm:p-6 pb-20">
+                                    <!-- Quick Summary -->
+                                    <div class="rounded-xl border border-border/60 bg-muted/30 p-4 sm:p-5 shadow-sm">
+                                        <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+                                            <div class="rounded-lg border border-border/50 bg-card/60 p-3">
+                                                <p class="text-[11px] uppercase tracking-wide text-muted-foreground mb-1">Date</p>
+                                                <p class="text-sm font-medium text-foreground">{{ formatEventDateLong(selectedEvent?.date) }}</p>
+                                            </div>
+                                            <div class="rounded-lg border border-border/50 bg-card/60 p-3">
+                                                <p class="text-[11px] uppercase tracking-wide text-muted-foreground mb-1">Schedule</p>
+                                                <p class="text-sm font-medium text-foreground">{{ formatEventScheduleText(selectedEvent) }}</p>
+                                            </div>
+                                            <div class="rounded-lg border border-border/50 bg-card/60 p-3">
+                                                <p class="text-[11px] uppercase tracking-wide text-muted-foreground mb-1">Category</p>
+                                                <Badge
+                                                    variant="secondary"
+                                                    class="text-xs border-0 px-2.5 py-1"
+                                                    :class="selectedEvent?.color ?? undefined"
+                                                    :style="(!selectedEvent?.color && selectedEvent?.colorHex) ? { backgroundColor: selectedEvent?.colorHex } : undefined"
+                                                >
+                                                    {{ formatCategoryName(selectedEvent?.category) }}
+                                                </Badge>
+                                            </div>
+                                            <div class="rounded-lg border border-border/50 bg-card/60 p-3">
+                                                <p class="text-[11px] uppercase tracking-wide text-muted-foreground mb-1">Visibility</p>
+                                                <Badge variant="secondary" class="text-xs border-0 px-2.5 py-1 bg-blue-500/20 text-blue-300">
+                                                    {{ formatEventVisibility(selectedEvent) }}
+                                                </Badge>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <!-- Main Content -->
+                                    <div class="grid grid-cols-1 xl:grid-cols-3 gap-4 sm:gap-5">
+                                        <!-- Details -->
+                                        <div class="xl:col-span-2 space-y-4">
+                                            <div class="rounded-xl border border-border/60 bg-muted/40 p-4 sm:p-5 shadow-sm">
+                                                <h3 class="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-3">Description</h3>
+                                                <p class="text-sm text-foreground leading-relaxed">
+                                                    {{ selectedEvent?.description || 'No description provided.' }}
+                                                </p>
+                                            </div>
+
+                                            <div class="rounded-xl border border-border/60 bg-muted/40 p-4 sm:p-5 shadow-sm">
+                                                <h3 class="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-3">Details</h3>
+                                                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                                    <div class="rounded-lg border border-border/50 bg-card/60 p-3">
+                                                        <p class="text-[11px] uppercase tracking-wide text-muted-foreground mb-1">Location</p>
                                                         <p class="text-sm text-foreground">{{ eventDetailsInfo.location || 'Not specified' }}</p>
                                                     </div>
-                                                    <div>
-                                                        <Label class="text-xs text-muted-foreground font-medium mb-2 block">Organizer</Label>
+                                                    <div class="rounded-lg border border-border/50 bg-card/60 p-3">
+                                                        <p class="text-[11px] uppercase tracking-wide text-muted-foreground mb-1">Organizer</p>
                                                         <p class="text-sm text-foreground">{{ eventDetailsInfo.organizer || 'Not specified' }}</p>
                                                     </div>
                                                 </div>
                                             </div>
                                         </div>
 
-                                        <!-- Description -->
-                                        <div class="bg-muted p-5 sm:p-6 rounded-lg border border-border/50 transition-all duration-200 flex flex-col flex-1 min-h-0">
-                                            <h3 class="text-sm font-semibold text-foreground uppercase tracking-wide mb-4">
-                                                Description
-                                            </h3>
-                                            <ScrollArea class="flex-1">
-                                                <p class="text-sm text-foreground leading-relaxed transition-all duration-200 pr-4">
-                                                    {{ selectedEvent?.description || 'No description provided.' }}
-                                                </p>
-                                            </ScrollArea>
-                                        </div>
-                                    </div>
-
-                                    <!-- Right Column - Going -->
-                                    <div class="flex flex-col">
-                                        <div class="bg-muted p-4 sm:p-5 rounded-lg border border-border/50 flex flex-col">
-                                            <h3 class="text-sm font-semibold text-foreground uppercase tracking-wide mb-4">
+                                        <!-- Attendees -->
+                                        <div class="rounded-xl border border-border/60 bg-muted/40 p-4 sm:p-5 shadow-sm">
+                                            <h3 class="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-3">
                                                 Going ({{ attendees.length }})
                                             </h3>
-                                            <ScrollArea class="max-h-96">
-                                                <div class="pr-4">
+                                            <ScrollArea class="max-h-80">
+                                                <div class="pr-3">
                                                     <template v-if="attendees.length === 0">
-                                                        <div class="text-center py-8">
+                                                        <div class="text-center py-6">
                                                             <p class="text-sm text-muted-foreground">No attendees yet</p>
                                                         </div>
                                                     </template>
@@ -2784,12 +2805,10 @@ const handleEditColorInput = (e: globalThis.Event) => {
                                                         <div
                                                             v-for="attendee in attendees"
                                                             :key="attendee.id"
-                                                            class="flex items-center gap-3 p-3 rounded-lg hover:bg-muted/50 transition-all duration-200"
+                                                            class="flex items-center gap-3 p-2.5 rounded-lg hover:bg-muted/60 transition-colors"
                                                         >
-                                                            <Avatar class="w-10 h-10 shrink-0">
-                                                                <AvatarFallback
-                                                                    class="bg-gradient-to-br from-blue-500 to-purple-600 text-foreground text-sm font-semibold"
-                                                                >
+                                                            <Avatar class="w-9 h-9 shrink-0">
+                                                                <AvatarFallback class="bg-gradient-to-br from-blue-500 to-purple-600 text-foreground text-xs font-semibold">
                                                                     {{ attendee.name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2) }}
                                                                 </AvatarFallback>
                                                             </Avatar>
@@ -2819,7 +2838,10 @@ const handleEditColorInput = (e: globalThis.Event) => {
                                 </div>
 
                                 <!-- Action Buttons (only show when not editing) -->
-                                <div v-if="!isEditing" class="flex flex-col-reverse sm:flex-row gap-3 justify-end mt-4 pt-4 border-t border-border/50">
+                                <div v-if="!isEditing" class="sticky bottom-0 z-10 flex flex-col-reverse sm:flex-row gap-3 justify-between items-center mt-4 px-4 py-3 sm:px-6 border-t border-border/60 bg-card/95 backdrop-blur supports-[backdrop-filter]:bg-card/80">
+                                    <p class="text-xs text-muted-foreground w-full sm:w-auto text-center sm:text-left">
+                                        Tip: Use Edit to update schedule/visibility, or mark attendance directly.
+                                    </p>
                                     <Button
                                         @click="closeEventDetails"
                                         variant="ghost"
@@ -2829,7 +2851,7 @@ const handleEditColorInput = (e: globalThis.Event) => {
                                         Cancel
                                     </Button>
                                     
-                                    <div class="flex gap-2">
+                                    <div class="flex gap-2 w-full sm:w-auto justify-center sm:justify-end">
                                         <Button
                                             v-if="canEditDeleteEvent"
                                             @click="handleDeleteClick"
