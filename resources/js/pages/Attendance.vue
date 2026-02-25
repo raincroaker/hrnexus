@@ -561,6 +561,24 @@ const memorandumWarnings = computed(() =>
 const warningEmployees = computed(() => 
     employeeWarnings.value.filter(emp => emp.status === 'warning')
 );
+
+// Refresh card data from backend without relying on placeholder/static values.
+const refreshAttendanceCards = () => {
+    router.reload({
+        only: [
+            'myLateCount',
+            'myAbsentCount',
+            'myYearlyAbsentCount',
+            'myConsecutiveAbsences',
+            'myLateDates',
+            'myAbsentDates',
+            'myLeaveDetails',
+            'teamAttendanceSummary',
+            'employeesOnLeaveRecords',
+            'overtimeRecords',
+        ],
+    });
+};
 // On Leave CRUD
 const editOnLeave = (record: { id: number; employee_id: number; employee_name: string; leave_type_id: number; date: string; notes: string | null }) => {
     editLeaveForm.value = {
@@ -588,7 +606,8 @@ const confirmDeleteLeave = async () => {
         toast.success('Leave record deleted successfully.');
         onLeaveDialogView.value = 'list';
         confirmDeleteLeaveRecord.value = null;
-        router.reload();
+        showOnLeaveModal.value = false;
+        refreshAttendanceCards();
     } catch (err: unknown) {
         const e = err as { response?: { data?: { message?: string } } };
         alert(e.response?.data?.message ?? 'Failed to delete leave record.');
@@ -615,7 +634,8 @@ const submitEditLeaveForm = async () => {
         });
         toast.success('Leave record updated successfully.');
         onLeaveDialogView.value = 'list';
-        router.reload();
+        showOnLeaveModal.value = false;
+        refreshAttendanceCards();
     } catch (err: unknown) {
         const e = err as { response?: { data?: { message?: string; errors?: Record<string, string[]> } } };
         const msg = e.response?.data?.message ?? 'Failed to update leave.';
@@ -648,7 +668,8 @@ const confirmDeleteOvertime = async () => {
         toast.success('Overtime record deleted successfully.');
         overtimeDialogView.value = 'list';
         confirmDeleteOvertimeRecord.value = null;
-        router.reload();
+        showOvertimeModal.value = false;
+        refreshAttendanceCards();
     } catch (err: unknown) {
         const e = err as { response?: { data?: { message?: string } } };
         alert(e.response?.data?.message ?? 'Failed to delete overtime record.');
@@ -712,7 +733,8 @@ const submitLeaveForm = async () => {
         toast.success(`Leave record${dayCount > 1 ? 's' : ''} added successfully (${dayCount} ${dayCount === 1 ? 'day' : 'days'}).`);
         resetLeaveForm();
         onLeaveDialogView.value = 'list';
-        router.reload();
+        showOnLeaveModal.value = false;
+        refreshAttendanceCards();
     } catch (err: unknown) {
         const e = err as { response?: { data?: { message?: string; errors?: Record<string, string[]> } } };
         const msg = e.response?.data?.message ?? 'Failed to add leave.';
@@ -740,7 +762,8 @@ const submitOvertimeForm = async () => {
         toast.success('Overtime record added successfully.');
         resetOvertimeForm();
         overtimeDialogView.value = 'list';
-        router.reload();
+        showOvertimeModal.value = false;
+        refreshAttendanceCards();
     } catch (err: unknown) {
         const e = err as { response?: { data?: { message?: string; errors?: Record<string, string[]> } } };
         const msg = e.response?.data?.message ?? 'Failed to add overtime.';
@@ -762,7 +785,8 @@ const submitEditOvertimeForm = async () => {
         await api.put(`/employee-overtime/${editOvertimeForm.value.id}`, { date: editOvertimeForm.value.date });
         toast.success('Overtime record updated successfully.');
         overtimeDialogView.value = 'list';
-        router.reload();
+        showOvertimeModal.value = false;
+        refreshAttendanceCards();
     } catch (err: unknown) {
         const e = err as { response?: { data?: { message?: string; errors?: Record<string, string[]> } } };
         const msg = e.response?.data?.message ?? 'Failed to update overtime.';
@@ -1352,7 +1376,7 @@ const fetchHolidays = async () => {
     try {
         const { data } = await api.get<{ holidays: Array<{ id: number; name: string; date: string }> }>('/holidays');
         holidaysList.value = data.holidays ?? [];
-    } catch (e) {
+    } catch {
         toast.error('Failed to load holidays');
         holidaysList.value = [];
     } finally {
