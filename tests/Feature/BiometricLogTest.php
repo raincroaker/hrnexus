@@ -79,5 +79,5 @@ it('updates attendance when the employee exists', function () {
     expect($attendance->time_out)->toBe('18:30:00');
     expect($attendance->status)->toBe('Late');
     expect($attendance->remarks)->toBe('Complete');
-    expect($attendance->total_hours)->toBe(9.42);
+    expect((float) $attendance->total_hours)->toBe(9.42);
 });

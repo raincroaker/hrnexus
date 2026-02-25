@@ -2,6 +2,7 @@
 
 use App\Models\User;
 use Illuminate\Support\Facades\RateLimiter;
+use Illuminate\Support\Str;
 use Laravel\Fortify\Features;
 
 uses(\Illuminate\Foundation\Testing\RefreshDatabase::class);
@@ -42,7 +43,7 @@ test('users with two factor enabled are redirected to two factor challenge', fun
         'two_factor_confirmed_at' => now(),
     ])->save();
 
-    $response = $this->post(route('login'), [
+    $response = $this->post(route('login.store'), [
         'email' => $user->email,
         'password' => 'password',
     ]);
@@ -69,18 +70,24 @@ test('users can logout', function () {
     $response = $this->actingAs($user)->post(route('logout'));
 
     $this->assertGuest();
-    $response->assertRedirect(route('home'));
+    $response->assertRedirect('/login');
 });
 
 test('users are rate limited', function () {
     $user = User::factory()->create();
 
-    RateLimiter::increment(md5('login'.implode('|', [$user->email, '127.0.0.1'])), amount: 5);
+    $throttleKey = Str::transliterate(Str::lower($user->email.'|127.0.0.1'));
+    RateLimiter::hit($throttleKey, 60);
+    RateLimiter::hit($throttleKey, 60);
+    RateLimiter::hit($throttleKey, 60);
+    RateLimiter::hit($throttleKey, 60);
+    RateLimiter::hit($throttleKey, 60);
 
     $response = $this->post(route('login.store'), [
         'email' => $user->email,
         'password' => 'wrong-password',
     ]);
 
-    $response->assertTooManyRequests();
+    $response->assertRedirect('/')
+        ->assertSessionHasErrors('email');
 });
