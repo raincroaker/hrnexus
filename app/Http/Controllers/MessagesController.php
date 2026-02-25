@@ -119,9 +119,10 @@ class MessagesController extends Controller
             ]);
         } catch (\Exception $e) {
             DB::rollBack();
+            report($e);
 
             return back()->withErrors([
-                'message' => 'Failed to send message: '.$e->getMessage(),
+                'message' => 'Failed to send message.',
             ]);
         }
     }
@@ -164,7 +165,10 @@ class MessagesController extends Controller
             }
 
             // Return file download response
-            return Storage::disk('local')->download(
+            /** @var \Illuminate\Filesystem\FilesystemAdapter $disk */
+            $disk = Storage::disk('local');
+
+            return $disk->download(
                 $filePath,
                 $attachment->file_name,
                 [
@@ -174,7 +178,8 @@ class MessagesController extends Controller
         } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
             abort(404, 'Attachment not found.');
         } catch (\Exception $e) {
-            abort(500, 'Failed to download file: '.$e->getMessage());
+            report($e);
+            abort(500, 'Failed to download file.');
         }
     }
 
@@ -284,9 +289,10 @@ class MessagesController extends Controller
             ]);
         } catch (\Exception $e) {
             DB::rollBack();
+            report($e);
 
             return back()->withErrors([
-                'message' => 'Failed to update message pin status: '.$e->getMessage(),
+                'message' => 'Failed to update message pin status.',
             ]);
         }
     }
@@ -362,9 +368,10 @@ class MessagesController extends Controller
             ]);
         } catch (\Exception $e) {
             DB::rollBack();
+            report($e);
 
             return back()->withErrors([
-                'message' => 'Failed to update message: '.$e->getMessage(),
+                'message' => 'Failed to update message.',
             ]);
         }
     }
@@ -438,9 +445,10 @@ class MessagesController extends Controller
             ]);
         } catch (\Exception $e) {
             DB::rollBack();
+            report($e);
 
             return back()->withErrors([
-                'message' => 'Failed to delete message: '.$e->getMessage(),
+                'message' => 'Failed to delete message.',
             ]);
         }
     }
@@ -514,9 +522,10 @@ class MessagesController extends Controller
             ]);
         } catch (\Exception $e) {
             DB::rollBack();
+            report($e);
 
             return back()->withErrors([
-                'message' => 'Failed to restore message: '.$e->getMessage(),
+                'message' => 'Failed to restore message.',
             ]);
         }
     }

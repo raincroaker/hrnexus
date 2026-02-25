@@ -39,15 +39,33 @@ class ChatsController extends Controller
                 },
             ])
             ->withCount('members')
-            ->get()
-            ->map(function ($chat) use ($currentUser, $allEmployees) {
-                // Get current user's membership info
-                $userMembership = ChatMember::where('chat_id', $chat->id)
-                    ->where('user_id', $currentUser->id)
-                    ->first();
+            ->get();
 
-                // Get total members count
-                $totalMembers = ChatMember::where('chat_id', $chat->id)->count();
+        // Preload messages once to avoid per-chat queries in loops.
+        $messagesByChat = Message::whereIn('chat_id', $chatIds)
+            ->with([
+                'user',
+                'editor',
+                'deleter',
+                'attachments' => function ($query) {
+                    $query->withoutGlobalScopes();
+                },
+            ])
+            ->orderBy('created_at', 'asc')
+            ->get()
+            ->groupBy('chat_id');
+
+        // Preload visible attachments once for all chats.
+        $attachmentsByChat = MessageAttachment::whereIn('chat_id', $chatIds)
+            ->whereHas('message', function ($query) {
+                $query->where('is_deleted', false);
+            })
+            ->get()
+            ->groupBy('chat_id');
+
+        $chats = $chats->map(function ($chat) use ($currentUser, $allEmployees, $messagesByChat, $attachmentsByChat) {
+                // Get current user's membership info from loaded members
+                $userMembership = $chat->members->firstWhere('user_id', $currentUser->id);
 
                 // Separate admins and members
                 $allMembers = $chat->members;
@@ -110,12 +128,10 @@ class ChatsController extends Controller
                     ];
                 })->values();
 
-                // Get last message for chat list
-                $lastMessage = Message::where('chat_id', $chat->id)
-                    ->where('is_deleted', false)
-                    ->with('user')
-                    ->latest()
-                    ->first();
+                $chatMessages = $messagesByChat->get($chat->id, collect());
+
+                // Get last visible message for chat list from preloaded messages
+                $lastMessage = $chatMessages->where('is_deleted', false)->last();
 
                 // Format last message
                 $lastMessageFormatted = null;
@@ -135,18 +151,7 @@ class ChatsController extends Controller
                 }
 
                 // Get all messages with attachments (including soft-deleted ones)
-                $messages = Message::where('chat_id', $chat->id)
-                    ->with([
-                        'user',
-                        'editor',
-                        'deleter',
-                        'attachments' => function ($query) {
-                            // MessageAttachment doesn't use SoftDeletes, so no need to check deleted_at
-                            $query->withoutGlobalScopes();
-                        },
-                    ])
-                    ->orderBy('created_at', 'asc')
-                    ->get()
+                $messages = $chatMessages
                     ->map(function ($message) use ($allEmployees) {
                         $user = $message->user;
                         $employee = $user && $allEmployees->has($user->email)
@@ -195,22 +200,12 @@ class ChatsController extends Controller
                                 ];
                             })->toArray(),
                         ];
-                    })->toArray();
+                    })->values()->toArray();
 
                 // Get pinned messages (including soft-deleted ones)
-                $pinnedMessages = Message::where('chat_id', $chat->id)
+                $pinnedMessages = $chatMessages
                     ->where('is_pinned', true)
-                    ->with([
-                        'user',
-                        'editor',
-                        'deleter',
-                        'attachments' => function ($query) {
-                            // MessageAttachment doesn't use SoftDeletes, so no need to check deleted_at
-                            $query->withoutGlobalScopes();
-                        },
-                    ])
-                    ->orderBy('created_at', 'desc')
-                    ->get()
+                    ->sortByDesc('created_at')
                     ->map(function ($message) use ($allEmployees) {
                         $user = $message->user;
                         $employee = $user && $allEmployees->has($user->email)
@@ -249,14 +244,11 @@ class ChatsController extends Controller
                                 ];
                             })->toArray(),
                         ];
-                    })->toArray();
+                    })->values()->toArray();
 
                 // Get all attachments for the chat
-                $attachments = MessageAttachment::where('chat_id', $chat->id)
-                    ->whereHas('message', function ($query) {
-                        $query->where('is_deleted', false);
-                    })
-                    ->get()
+                $attachments = $attachmentsByChat
+                    ->get($chat->id, collect())
                     ->map(function ($attachment) {
                         return [
                             'id' => $attachment->id,
@@ -276,7 +268,7 @@ class ChatsController extends Controller
                     'updated_at' => $chat->updated_at->toISOString(),
                     'last_message' => $lastMessageFormatted,
                     'member_count' => $chat->members_count,
-                    'total_members' => $totalMembers,
+                    'total_members' => $chat->members_count,
                     'is_pinned' => $userMembership?->is_pinned ?? false,
                     'is_seen' => $userMembership?->is_seen ?? true,
                     // Full details for frontend rendering
@@ -424,9 +416,10 @@ class ChatsController extends Controller
             return redirect()->route('chats')->with('success', 'Group chat created successfully');
         } catch (\Exception $e) {
             DB::rollBack();
+            report($e);
 
             return back()->withErrors([
-                'message' => 'Failed to create group chat: '.$e->getMessage(),
+                'message' => 'Failed to create group chat.',
             ]);
         }
     }
@@ -499,8 +492,9 @@ class ChatsController extends Controller
                 'message' => 'Chat not found.',
             ]);
         } catch (\Exception $e) {
+            report($e);
             return back()->withErrors([
-                'message' => 'Failed to rename chat: '.$e->getMessage(),
+                'message' => 'Failed to rename chat.',
             ]);
         }
     }

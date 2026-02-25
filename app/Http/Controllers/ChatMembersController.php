@@ -12,6 +12,7 @@ use App\Models\Employee;
 use App\Models\Message;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 class ChatMembersController extends Controller
 {
@@ -40,6 +41,7 @@ class ChatMembersController extends Controller
 
             return back();
         } catch (\Exception $e) {
+            report($e);
             return back();
         }
     }
@@ -75,8 +77,9 @@ class ChatMembersController extends Controller
 
             return back();
         } catch (\Exception $e) {
+            report($e);
             return back()->withErrors([
-                'message' => 'Failed to update seen status: '.$e->getMessage(),
+                'message' => 'Failed to update seen status.',
             ]);
         }
     }
@@ -177,9 +180,10 @@ class ChatMembersController extends Controller
             return back();
         } catch (\Exception $e) {
             DB::rollBack();
+            report($e);
 
             return back()->withErrors([
-                'message' => 'Failed to set as admin: '.$e->getMessage(),
+                'message' => 'Failed to set as admin.',
             ]);
         }
     }
@@ -211,6 +215,16 @@ class ChatMembersController extends Controller
             if (! $targetMember || ! $targetMember->is_admin) {
                 return back()->withErrors([
                     'message' => 'Member not found or is not an admin.',
+                ]);
+            }
+
+            // Prevent demoting the last admin to avoid adminless chats.
+            $adminCount = ChatMember::where('chat_id', $chatId)
+                ->where('is_admin', true)
+                ->count();
+            if ($adminCount <= 1) {
+                return back()->withErrors([
+                    'message' => 'Cannot remove admin status from the last admin.',
                 ]);
             }
 
@@ -272,9 +286,10 @@ class ChatMembersController extends Controller
             return back();
         } catch (\Exception $e) {
             DB::rollBack();
+            report($e);
 
             return back()->withErrors([
-                'message' => 'Failed to remove admin status: '.$e->getMessage(),
+                'message' => 'Failed to remove admin status.',
             ]);
         }
     }
@@ -332,8 +347,8 @@ class ChatMembersController extends Controller
 
             DB::beginTransaction();
 
-            // Remove member from chat (permanently delete)
-            $targetMember->forceDelete();
+            // Soft delete member so they can be restored if re-added later.
+            $targetMember->delete();
 
             // Create system message: "currentuser removed user from the group chat"
             $systemMessage = Message::create([
@@ -373,9 +388,10 @@ class ChatMembersController extends Controller
             return back();
         } catch (\Exception $e) {
             DB::rollBack();
+            report($e);
 
             return back()->withErrors([
-                'message' => 'Failed to remove member: '.$e->getMessage(),
+                'message' => 'Failed to remove member.',
             ]);
         }
     }
@@ -403,37 +419,35 @@ class ChatMembersController extends Controller
             // Get member IDs to add and ensure they're unique
             $memberIdsToAdd = array_values(array_unique($validated['member_ids']));
 
-            \Log::info('[addMembers] Request received', [
+            Log::info('[addMembers] Request received', [
                 'chat_id' => $chatId,
                 'current_user_id' => $currentUser->id,
                 'member_ids_to_add' => $memberIdsToAdd,
             ]);
 
-            // Get existing member IDs to filter out duplicates (including current user)
-            // Include soft-deleted members to avoid creating duplicates
-            $existingMemberIds = ChatMember::withTrashed()
-                ->where('chat_id', $chatId)
+            // Get active members only; soft-deleted members should be restored.
+            $existingActiveMemberIds = ChatMember::where('chat_id', $chatId)
                 ->pluck('user_id')
                 ->toArray();
 
-            \Log::info('[addMembers] Existing members in chat (including soft-deleted)', [
-                'existing_member_ids' => $existingMemberIds,
+            Log::info('[addMembers] Existing active members in chat', [
+                'existing_member_ids' => $existingActiveMemberIds,
             ]);
 
-            // Filter out members that are already in the chat (including soft-deleted)
-            $newMemberIds = array_values(array_diff($memberIdsToAdd, $existingMemberIds));
+            // Filter out members that are already active in the chat.
+            $newMemberIds = array_values(array_diff($memberIdsToAdd, $existingActiveMemberIds));
 
-            \Log::info('[addMembers] After filtering', [
+            Log::info('[addMembers] After filtering', [
                 'original_count' => count($memberIdsToAdd),
-                'existing_count' => count($existingMemberIds),
+                'existing_count' => count($existingActiveMemberIds),
                 'new_member_ids' => $newMemberIds,
                 'new_count' => count($newMemberIds),
             ]);
 
             if (count($newMemberIds) === 0) {
-                \Log::warning('[addMembers] No new members to add', [
+                Log::warning('[addMembers] No new members to add', [
                     'member_ids_to_add' => $memberIdsToAdd,
-                    'existing_member_ids' => $existingMemberIds,
+                    'existing_member_ids' => $existingActiveMemberIds,
                 ]);
 
                 return back()->withErrors([
@@ -453,51 +467,44 @@ class ChatMembersController extends Controller
             $successfullyAddedIds = [];
             foreach ($newMemberIds as $memberId) {
                 try {
-                    // Check if a soft-deleted member exists
-                    $trashedMember = ChatMember::withTrashed()
+                    $existingMember = ChatMember::withTrashed()
                         ->where('chat_id', $chatId)
                         ->where('user_id', $memberId)
-                        ->whereNotNull('deleted_at')
                         ->first();
 
-                    if ($trashedMember) {
+                    if ($existingMember && $existingMember->trashed()) {
                         // Restore the soft-deleted member
-                        $trashedMember->restore();
-                        $trashedMember->update([
+                        $existingMember->restore();
+                        $existingMember->update([
                             'is_admin' => false,
                             'is_pinned' => false,
                             'is_seen' => false,
                         ]);
                         $successfullyAddedIds[] = $memberId;
-                        \Log::info('[addMembers] Restored soft-deleted member', [
+                        Log::info('[addMembers] Restored soft-deleted member', [
                             'chat_id' => $chatId,
                             'user_id' => $memberId,
                         ]);
+                    } elseif ($existingMember) {
+                        // Already active in chat; no-op.
+                        continue;
                     } else {
-                        // Create new member if it doesn't exist (even soft-deleted)
-                        $chatMember = ChatMember::firstOrCreate(
-                            [
-                                'chat_id' => $chatId,
-                                'user_id' => $memberId,
-                            ],
-                            [
-                                'is_admin' => false,
-                                'is_pinned' => false,
-                                'is_seen' => false,
-                            ]
-                        );
+                        ChatMember::create([
+                            'chat_id' => $chatId,
+                            'user_id' => $memberId,
+                            'is_admin' => false,
+                            'is_pinned' => false,
+                            'is_seen' => false,
+                        ]);
 
-                        // Only add to success list if it was just created
-                        if ($chatMember->wasRecentlyCreated) {
-                            $successfullyAddedIds[] = $memberId;
-                            \Log::info('[addMembers] Created new member', [
-                                'chat_id' => $chatId,
-                                'user_id' => $memberId,
-                            ]);
-                        }
+                        $successfullyAddedIds[] = $memberId;
+                        Log::info('[addMembers] Created new member', [
+                            'chat_id' => $chatId,
+                            'user_id' => $memberId,
+                        ]);
                     }
                 } catch (\Exception $e) {
-                    \Log::error('[addMembers] Error adding member', [
+                    Log::error('[addMembers] Error adding member', [
                         'chat_id' => $chatId,
                         'user_id' => $memberId,
                         'error' => $e->getMessage(),
@@ -571,9 +578,10 @@ class ChatMembersController extends Controller
             return back();
         } catch (\Exception $e) {
             DB::rollBack();
+            report($e);
 
             return back()->withErrors([
-                'message' => 'Failed to add members: '.$e->getMessage(),
+                'message' => 'Failed to add members.',
             ]);
         }
     }
@@ -629,8 +637,8 @@ class ChatMembersController extends Controller
 
             DB::beginTransaction();
 
-            // Permanently delete the member (leave the chat)
-            $currentUserMember->forceDelete();
+            // Soft delete member so they can be restored if re-added later.
+            $currentUserMember->delete();
 
             // Check if this was the last member
             $remainingMemberCount = ChatMember::where('chat_id', $chatId)->count();
@@ -683,9 +691,10 @@ class ChatMembersController extends Controller
             return redirect()->route('chats')->with('success', 'You have left the group chat.');
         } catch (\Exception $e) {
             DB::rollBack();
+            report($e);
 
             return back()->withErrors([
-                'message' => 'Failed to leave chat: '.$e->getMessage(),
+                'message' => 'Failed to leave chat.',
             ]);
         }
     }
