@@ -6,9 +6,9 @@ import {
     SidebarMenuButton,
     SidebarMenuItem,
 } from '@/components/ui/sidebar';
-import { urlIsActive } from '@/lib/utils';
+import { normalizeUrlPath, toUrl, urlIsActive } from '@/lib/utils';
 import { type NavItem } from '@/types';
-import { Link, router, usePage } from '@inertiajs/vue3';
+import { Link, router, usePage, type InertiaLinkProps } from '@inertiajs/vue3';
 
 interface NavGroup {
     label: string;
@@ -21,9 +21,14 @@ defineProps<{
 
 const page = usePage();
 
-function handleNavClick(e: MouseEvent, href: string) {
-    const current = page.url.split('?')[0];
-    const target = href.split('?')[0];
+function handleNavClick(e: MouseEvent, href: NonNullable<InertiaLinkProps['href']>) {
+    const current = normalizeUrlPath(String(page.url ?? ''));
+    const target = normalizeUrlPath(toUrl(href));
+
+    if (!target) {
+        return;
+    }
+
     if (current === target) {
         e.preventDefault();
         router.reload();

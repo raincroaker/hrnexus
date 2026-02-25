@@ -10,9 +10,20 @@ export function urlIsActive(
     urlToCheck: NonNullable<InertiaLinkProps['href']>,
     currentUrl: string,
 ) {
-    return toUrl(urlToCheck) === currentUrl;
+    const target = normalizeUrlPath(toUrl(urlToCheck));
+    const current = normalizeUrlPath(currentUrl);
+
+    return target.length > 0 && target === current;
 }
 
 export function toUrl(href: NonNullable<InertiaLinkProps['href']>) {
-    return typeof href === 'string' ? href : href?.url;
+    if (typeof href === 'string') {
+        return href;
+    }
+
+    return typeof href?.url === 'string' ? href.url : '';
+}
+
+export function normalizeUrlPath(url: string) {
+    return String(url ?? '').split('?')[0].split('#')[0];
 }
